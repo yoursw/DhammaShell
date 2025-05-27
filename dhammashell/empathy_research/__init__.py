@@ -11,7 +11,6 @@ from .empathy_analyzer import EmpathyAnalyzer
 from .data_collector import ResearchDataCollector
 from .metrics import EmpathyMetrics, EmpathyMetric
 from .research_report import ResearchReport
-from .audit import AuditReport
 
 __all__ = [
     "EmpathyAnalyzer",
@@ -19,5 +18,4 @@ __all__ = [
     "EmpathyMetrics",
     "EmpathyMetric",
     "ResearchReport",
-    "AuditReport",
 ]

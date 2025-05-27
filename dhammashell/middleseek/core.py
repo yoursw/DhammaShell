@@ -77,7 +77,6 @@ class SystemHealth:
             "errors": 0,
             "compassion_scores": [],
             "response_times": [],
-            "last_audit": time.time(),
             "healing_attempts": 0
         }
         self.health_thresholds = {
@@ -102,9 +101,6 @@ class SystemHealth:
 
     def check_health(self) -> Tuple[bool, str]:
         """Check system health and return status with message."""
-        current_time = time.time()
-        time_since_last_audit = current_time - self.health_metrics["last_audit"]
-
         # Check error rate
         if self.health_metrics["errors"] > self.health_thresholds["max_errors_per_minute"]:
             self.healing_logger.warning(f"Error rate {self.health_metrics['errors']} exceeds threshold {self.health_thresholds['max_errors_per_minute']}")
@@ -135,7 +131,6 @@ class SystemHealth:
 
         self.health_metrics["healing_attempts"] += 1
         self.health_metrics["errors"] = 0
-        self.health_metrics["last_audit"] = time.time()
         self.healing_logger.info(f"Healing attempt {self.health_metrics['healing_attempts']} initiated")
         return True
 
@@ -146,7 +141,6 @@ class SystemHealth:
             "errors": 0,
             "compassion_scores": [],
             "response_times": [],
-            "last_audit": time.time(),
             "healing_attempts": 0
         }
         self.healing_logger.info("Health metrics reset")
@@ -198,7 +192,7 @@ class ChatHistoryEntry:
     context: Optional[List[Dict]]
 
 class ChatHistory:
-    """Manages chat history for auditing purposes."""
+    """Manages chat history."""
 
     def __init__(self, max_entries: int = 1000):
         self.history: List[ChatHistoryEntry] = []
@@ -292,27 +286,6 @@ class MiddleSeekCore:
         self.chat_history = ChatHistory()
         self.healing_logger = logging.getLogger(f"{__name__}.healing")
 
-    def _audit_response(self, response: str) -> Tuple[bool, Optional[str]]:
-        """Audit the response for ethical compliance."""
-        # Check for potentially harmful content
-        harmful_patterns = [
-            "harm you", "harm others", "harmful", "violence", "abuse", "illegal", "unethical",
-            "manipulation", "deception", "exploitation"
-        ]
-
-        response_lower = response.lower()
-        for pattern in harmful_patterns:
-            if pattern in response_lower:
-                self.healing_logger.warning(f"Potentially harmful content detected: {pattern}")
-                return False, f"Detected harmful pattern: {pattern}"
-
-        # Check response length and structure
-        if len(response) < 10 or len(response) > 2000:
-            self.healing_logger.warning("Response length outside acceptable range")
-            return False, "Response length outside acceptable range"
-
-        return True, None
-
     def _heal_response(self, response: str, reason: str) -> str:
         """Attempt to heal a problematic response."""
         # Remove potentially harmful content
@@ -402,35 +375,16 @@ Please provide a response that aligns with the Dharma Protocol and maintains eth
             self.health.record_metric("compassion_scores", compassion_score)
             self.health.record_metric("response_times", time.time() - start_time)
 
-            # Audit and heal response if necessary
-            is_valid, healing_reason = self._audit_response(response)
-            if not is_valid:
-                healed_response = self._heal_response(response, healing_reason)
-                logger.info("Response healed after audit")
-
-                # Record in chat history
-                self.chat_history.add_entry(ChatHistoryEntry(
-                    timestamp=datetime.now(),
-                    message=message,
-                    original_response=response,
-                    healed_response=healed_response,
-                    healing_reason=healing_reason,
-                    compassion_score=compassion_score,
-                    context=context
-                ))
-
-                response = healed_response
-            else:
-                # Record valid response in chat history
-                self.chat_history.add_entry(ChatHistoryEntry(
-                    timestamp=datetime.now(),
-                    message=message,
-                    original_response=response,
-                    healed_response=None,
-                    healing_reason=None,
-                    compassion_score=compassion_score,
-                    context=context
-                ))
+            # Record in chat history
+            self.chat_history.add_entry(ChatHistoryEntry(
+                timestamp=datetime.now(),
+                message=message,
+                original_response=response,
+                healed_response=None,
+                healing_reason=None,
+                compassion_score=compassion_score,
+                context=context
+            ))
 
             # Add Dharma wisdom for high compassion scores
             if compassion_score >= 4:
@@ -438,6 +392,7 @@ Please provide a response that aligns with the Dharma Protocol and maintains eth
                 response += f"\n\nDharma Wisdom: {wisdom}"
 
             return response
+
         except Exception as e:
             self.health.record_metric("errors", self.health.health_metrics["errors"] + 1)
             logger.error(f"Failed to generate response: {str(e)}")

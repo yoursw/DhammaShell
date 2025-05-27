@@ -12,7 +12,6 @@ from .empathy_research import (
     ResearchDataCollector,
     EmpathyMetrics,
     ResearchReport,
-    AuditReport,
 )
 from .main import DhammaShell
 
@@ -77,45 +76,6 @@ def chat(calm: bool):
         ds.chat_loop()
     except Exception as e:
         click.echo(f"Error in chat session: {str(e)}", err=True)
-
-
-@cli.command(name="audit")
-@click.option("--session-id", help="Session ID to audit")
-@click.option(
-    "--confidence", default=0.99999, help="Required confidence level (default: 99.999%)"
-)
-@click.option("--sigma", default=6, help="Required sigma level (default: 6)")
-def audit(session_id: Optional[str], confidence: float, sigma: int):
-    """Generate compliance audit report"""
-    try:
-        # Initialize components
-        data_collector = ResearchDataCollector()
-        audit_report = AuditReport()
-
-        # Get session data
-        if session_id:
-            session_data = data_collector.load_session(session_id)
-        else:
-            # Get the most recent session
-            sessions = data_collector.list_sessions()
-            if not sessions:
-                click.echo("No sessions found")
-                return
-            session_data = data_collector.load_session(sessions[-1])
-
-        if not session_data:
-            click.echo("No session data found")
-            return
-
-        # Generate audit report
-        report = audit_report.generate_audit_report(
-            session_data=session_data, confidence_level=confidence, sigma_level=sigma
-        )
-
-        click.echo(report)
-
-    except Exception as e:
-        click.echo(f"Error generating audit report: {str(e)}", err=True)
 
 
 @cli.command(name="update-research")

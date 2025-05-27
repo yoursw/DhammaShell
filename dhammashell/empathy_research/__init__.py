@@ -14,10 +14,10 @@ from .research_report import ResearchReport
 from .audit import AuditReport
 
 __all__ = [
-    'EmpathyAnalyzer',
-    'ResearchDataCollector',
-    'EmpathyMetrics',
-    'EmpathyMetric',
-    'ResearchReport',
-    'AuditReport'
-] 
+    "EmpathyAnalyzer",
+    "ResearchDataCollector",
+    "EmpathyMetrics",
+    "EmpathyMetric",
+    "ResearchReport",
+    "AuditReport",
+]

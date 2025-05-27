@@ -7,18 +7,33 @@ from pathlib import Path
 from typing import Optional
 import json
 from datetime import datetime
-from .empathy_research import EmpathyAnalyzer, ResearchDataCollector, EmpathyMetrics, ResearchReport, AuditReport
+from .empathy_research import (
+    EmpathyAnalyzer,
+    ResearchDataCollector,
+    EmpathyMetrics,
+    ResearchReport,
+    AuditReport,
+)
 from .main import DhammaShell
+
 
 @click.group()
 def cli():
     """DhammaShell - A mindful terminal chat tool"""
     pass
 
-@cli.command(name='research-report')
-@click.option('--session-id', help='Session ID to analyze')
-@click.option('--output-format', type=click.Choice(['text', 'json']), default='text', help='Output format')
-@click.option('--no-visualizations', is_flag=True, help='Disable visualization generation')
+
+@cli.command(name="research-report")
+@click.option("--session-id", help="Session ID to analyze")
+@click.option(
+    "--output-format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    help="Output format",
+)
+@click.option(
+    "--no-visualizations", is_flag=True, help="Disable visualization generation"
+)
 def research_report(session_id, output_format, no_visualizations):
     """Generate a research report from session data"""
     try:
@@ -38,10 +53,10 @@ def research_report(session_id, output_format, no_visualizations):
         report = report_generator.generate_report(
             session_data,
             output_format=output_format,
-            include_visualizations=not no_visualizations
+            include_visualizations=not no_visualizations,
         )
 
-        if output_format == 'text':
+        if output_format == "text":
             click.echo(report)
         else:
             # Save JSON report to file
@@ -52,8 +67,9 @@ def research_report(session_id, output_format, no_visualizations):
     except Exception as e:
         click.echo(f"Error generating research report: {str(e)}", err=True)
 
+
 @cli.command()
-@click.option('--calm', is_flag=True, help='Enable zen mode with delays')
+@click.option("--calm", is_flag=True, help="Enable zen mode with delays")
 def chat(calm: bool):
     """Start an interactive chat session"""
     try:
@@ -62,10 +78,13 @@ def chat(calm: bool):
     except Exception as e:
         click.echo(f"Error in chat session: {str(e)}", err=True)
 
-@cli.command(name='audit')
-@click.option('--session-id', help='Session ID to audit')
-@click.option('--confidence', default=0.99999, help='Required confidence level (default: 99.999%)')
-@click.option('--sigma', default=6, help='Required sigma level (default: 6)')
+
+@cli.command(name="audit")
+@click.option("--session-id", help="Session ID to audit")
+@click.option(
+    "--confidence", default=0.99999, help="Required confidence level (default: 99.999%)"
+)
+@click.option("--sigma", default=6, help="Required sigma level (default: 6)")
 def audit(session_id: Optional[str], confidence: float, sigma: int):
     """Generate compliance audit report"""
     try:
@@ -90,9 +109,7 @@ def audit(session_id: Optional[str], confidence: float, sigma: int):
 
         # Generate audit report
         report = audit_report.generate_audit_report(
-            session_data=session_data,
-            confidence_level=confidence,
-            sigma_level=sigma
+            session_data=session_data, confidence_level=confidence, sigma_level=sigma
         )
 
         click.echo(report)
@@ -100,9 +117,15 @@ def audit(session_id: Optional[str], confidence: float, sigma: int):
     except Exception as e:
         click.echo(f"Error generating audit report: {str(e)}", err=True)
 
-@cli.command(name='update-research')
-@click.option('--session-id', help='Chat session ID to analyze')
-@click.option('--output-format', type=click.Choice(['text', 'json']), default='text', help='Output format')
+
+@cli.command(name="update-research")
+@click.option("--session-id", help="Chat session ID to analyze")
+@click.option(
+    "--output-format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    help="Output format",
+)
 def update_research(session_id: Optional[str], output_format: str):
     """Update research data from chat history"""
     try:
@@ -128,15 +151,15 @@ def update_research(session_id: Optional[str], output_format: str):
         for interaction in chat_history:
             # Analyze the interaction
             analysis = analyzer.analyze_interaction(
-                user_input=interaction['user_input'],
-                system_response=interaction['system_response']
+                user_input=interaction["user_input"],
+                system_response=interaction["system_response"],
             )
 
             # Record the interaction
             collector.record_interaction(
-                user_input=interaction['user_input'],
-                system_response=interaction['system_response'],
-                analysis=analysis
+                user_input=interaction["user_input"],
+                system_response=interaction["system_response"],
+                analysis=analysis,
             )
 
         # Save the research session
@@ -145,11 +168,10 @@ def update_research(session_id: Optional[str], output_format: str):
         # Generate report
         report_generator = ResearchReport()
         report = report_generator.generate_report(
-            collector.load_session(research_session_id),
-            output_format=output_format
+            collector.load_session(research_session_id), output_format=output_format
         )
 
-        if output_format == 'text':
+        if output_format == "text":
             click.echo(report)
         else:
             # Save JSON report to file
@@ -164,14 +186,16 @@ def update_research(session_id: Optional[str], output_format: str):
     except Exception as e:
         click.echo(f"Error updating research data: {str(e)}", err=True)
 
+
 @cli.group()
 def config():
     """Configure DhammaShell settings."""
     pass
 
+
 @config.command()
-@click.option('--clear', is_flag=True, help='Clear stored API key')
-@click.option('--research', type=bool, help='Enable/disable research mode')
+@click.option("--clear", is_flag=True, help="Clear stored API key")
+@click.option("--research", type=bool, help="Enable/disable research mode")
 def set(clear: bool, research: Optional[bool]):
     """Set configuration values."""
     try:
@@ -186,6 +210,7 @@ def set(clear: bool, research: Optional[bool]):
         click.echo(f"Error: {str(e)}", err=True)
         raise click.Abort()
 
+
 @config.command()
 def show():
     """Show current configuration settings."""
@@ -197,11 +222,11 @@ def show():
         click.echo("-------------------------")
 
         # API Key status
-        api_status = "Configured" if settings['api_key'] else "Not configured"
+        api_status = "Configured" if settings["api_key"] else "Not configured"
         click.echo(f"API Key: {api_status}")
 
         # Research mode
-        research_status = "Enabled" if settings['research_mode'] else "Disabled"
+        research_status = "Enabled" if settings["research_mode"] else "Disabled"
         click.echo(f"Research Mode: {research_status}")
 
         click.echo("-------------------------\n")
@@ -210,9 +235,11 @@ def show():
         click.echo(f"Error: {str(e)}", err=True)
         raise click.Abort()
 
+
 def main():
     """Entry point for the CLI"""
     cli()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

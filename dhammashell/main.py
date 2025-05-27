@@ -21,13 +21,13 @@ from .empathy_research import EmpathyAnalyzer, ResearchDataCollector
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
 app = typer.Typer()
 console = Console()
+
 
 class DhammaShell:
     def __init__(self, calm_mode: bool = False):
@@ -38,10 +38,12 @@ class DhammaShell:
         """
         self.calm_mode = calm_mode
         self.session = PromptSession()
-        self.style = Style.from_dict({
-            'prompt': 'ansicyan',
-            'input': 'ansigreen',
-        })
+        self.style = Style.from_dict(
+            {
+                "prompt": "ansicyan",
+                "input": "ansigreen",
+            }
+        )
         self.config = Config()
         self._middleseek = None
         self._empathy_analyzer = None
@@ -59,7 +61,9 @@ class DhammaShell:
             try:
                 api_key = self.config.get_api_key()
                 if not api_key:
-                    raise ValueError("OpenRouter API key is required. Run 'ds config' to set it up.")
+                    raise ValueError(
+                        "OpenRouter API key is required. Run 'ds config' to set it up."
+                    )
                 self._middleseek = MiddleSeekProtocol(api_key=api_key)
             except Exception as e:
                 logger.error(f"Failed to initialize MiddleSeek protocol: {str(e)}")
@@ -111,8 +115,10 @@ class DhammaShell:
             sentiment = blob.sentiment.polarity
 
             # Check for negative words
-            negative_words = ['hate', 'stupid', 'idiot', 'dumb', 'ugly', 'terrible']
-            negative_count = sum(1 for word in text.lower().split() if word in negative_words)
+            negative_words = ["hate", "stupid", "idiot", "dumb", "ugly", "terrible"]
+            negative_count = sum(
+                1 for word in text.lower().split() if word in negative_words
+            )
 
             # Calculate compassion score (0-5)
             base_score = 3
@@ -157,7 +163,11 @@ class DhammaShell:
         Raises:
             ValueError: If user_input is empty or invalid
         """
-        if not user_input or not isinstance(user_input, str) or len(user_input.strip()) == 0:
+        if (
+            not user_input
+            or not isinstance(user_input, str)
+            or len(user_input.strip()) == 0
+        ):
             raise ValueError("Invalid user input")
 
         try:
@@ -187,21 +197,19 @@ class DhammaShell:
 
             response_content = self.middleseek.generate_response(seek_msg, score)
             response_msg = self.middleseek.create_response(
-                response_content,
-                {"compassion_score": score}
+                response_content, {"compassion_score": score}
             )
             console.print(f"\n[System] {response_msg.content}\n")
 
             # Analyze and record interaction for research if enabled
             if self.research_mode and self.research_collector:
                 analysis = self.empathy_analyzer.analyze_interaction(
-                    user_input=user_input,
-                    system_response=response_content
+                    user_input=user_input, system_response=response_content
                 )
                 self.research_collector.record_interaction(
                     user_input=user_input,
                     system_response=response_content,
-                    analysis=analysis
+                    analysis=analysis,
                 )
 
         except Exception as e:
@@ -219,11 +227,10 @@ class DhammaShell:
                 try:
                     # Get user input with custom prompt
                     user_input = self.session.prompt(
-                        HTML("<prompt>[You] ➜ </prompt>"),
-                        style=self.style
+                        HTML("<prompt>[You] ➜ </prompt>"), style=self.style
                     )
 
-                    if user_input.lower() in ['exit', 'quit', 'q']:
+                    if user_input.lower() in ["exit", "quit", "q"]:
                         # Save research data before exiting if enabled
                         if self.research_mode and self.research_collector:
                             self.research_collector.save_session()
@@ -237,7 +244,9 @@ class DhammaShell:
                     # Save research data before exiting if enabled
                     if self.research_mode and self.research_collector:
                         self.research_collector.save_session()
-                        console.print("\n[yellow]Chat session ended. Research data saved.[/yellow]")
+                        console.print(
+                            "\n[yellow]Chat session ended. Research data saved.[/yellow]"
+                        )
                     break
                 except Exception as e:
                     logger.error(f"Error in chat loop: {str(e)}")
@@ -250,6 +259,7 @@ class DhammaShell:
                 except Exception as e:
                     logger.error(f"Failed to save research data: {str(e)}")
 
+
 @app.command()
 def chat(calm: bool = typer.Option(False, "--calm", help="Enable zen mode")):
     """Start the mindful chat interface."""
@@ -260,6 +270,7 @@ def chat(calm: bool = typer.Option(False, "--calm", help="Enable zen mode")):
         logger.error(f"Failed to start chat: {str(e)}")
         console.print(f"[red]Error: {str(e)}[/red]")
         sys.exit(1)
+
 
 @app.command()
 def check(text: str = typer.Argument(..., help="Text to analyze for compassion")):
@@ -273,10 +284,13 @@ def check(text: str = typer.Argument(..., help="Text to analyze for compassion")
         console.print(f"[red]Error: {str(e)}[/red]")
         sys.exit(1)
 
+
 @app.command()
 def config(
     clear: bool = typer.Option(False, "--clear", help="Clear stored API key"),
-    research: Optional[bool] = typer.Option(None, "--research", help="Enable/disable research mode")
+    research: Optional[bool] = typer.Option(
+        None, "--research", help="Enable/disable research mode"
+    ),
 ):
     """Configure DhammaShell settings."""
     try:
@@ -292,6 +306,7 @@ def config(
         console.print(f"[red]Error: {str(e)}[/red]")
         sys.exit(1)
 
+
 @app.command()
 def export(calm: bool = typer.Option(False, "--calm", help="Enable zen mode")):
     """Export the current conversation."""
@@ -303,6 +318,7 @@ def export(calm: bool = typer.Option(False, "--calm", help="Enable zen mode")):
         console.print(f"[red]Error: {str(e)}[/red]")
         sys.exit(1)
 
+
 def main():
     try:
         app()
@@ -310,6 +326,7 @@ def main():
         logger.error(f"Application error: {str(e)}")
         console.print(f"[red]Error: {str(e)}[/red]")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

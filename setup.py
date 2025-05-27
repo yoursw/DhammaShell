@@ -25,11 +25,18 @@ setup(
         "matplotlib>=3.8.0",
         "seaborn>=0.13.0",
         "tabulate>=0.9.0",
-        "pandas>=2.2.0"
+        "pandas>=2.2.0",
     ],
+    extras_require={
+        "dev": [
+            "pytest>=7.0.0",
+            "pytest-cov>=4.0.0",
+            "black>=23.0.0",
+        ],
+    },
     entry_points={
-        'console_scripts': [
-            'ds=dhammashell.cli:main',
+        "console_scripts": [
+            "ds=dhammashell.cli:main",
         ],
     },
     author="DhammaShell Team",
@@ -55,4 +62,4 @@ setup(
         "dhammashell": ["py.typed"],
         "middleseek": ["py.typed"],
     },
-) 
+)

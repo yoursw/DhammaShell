@@ -18,6 +18,7 @@ from prompt_toolkit.formatted_text import HTML
 from .middleseek import MiddleSeekProtocol, MessageType, MiddleSeekMessage
 from .config import Config
 from .empathy_research import EmpathyAnalyzer, ResearchDataCollector
+from .alignment import AlignmentReporter, AlignmentMetric
 
 # Configure logging
 logging.basicConfig(
@@ -48,6 +49,7 @@ class DhammaShell:
         self._middleseek = None
         self._empathy_analyzer = None
         self._research_collector = None
+        self._alignment_reporter = None
         self.conversation_context = []
 
     @property
@@ -77,6 +79,15 @@ class DhammaShell:
             self._research_collector = ResearchDataCollector()
             self._research_collector.start_session()
         return self._research_collector
+
+    @property
+    def alignment_reporter(self) -> Optional[AlignmentReporter]:
+        """Get or initialize alignment reporter if enabled."""
+        if self.config.alignment.enabled and self._alignment_reporter is None:
+            self._alignment_reporter = AlignmentReporter(
+                report_dir=self.config.alignment.report_dir
+            )
+        return self._alignment_reporter
 
     def analyze_compassion(self, text: str) -> tuple[int, str]:
         """Analyze compassion level in text."""
@@ -115,6 +126,57 @@ class DhammaShell:
 
         console.print(f"\n[Compassion Check] ", end="")
         console.print(f"[{color}]Score: {score}/5 - {feedback}[/{color}]\n")
+
+    def analyze_alignment(self, user_input: str, response: str) -> None:
+        """Analyze and record alignment metrics for the interaction.
+
+        Args:
+            user_input: The user's input message
+            response: The system's response
+        """
+        if not self.alignment_reporter:
+            return
+
+        try:
+            # Analyze compassion alignment
+            compassion_score, _ = self.analyze_compassion(response)
+            self.alignment_reporter.add_metric(
+                "compassion_alignment",
+                compassion_score / 4.0,  # Normalize to 0-1
+                confidence=0.8,
+                context={"user_input": user_input}
+            )
+
+            # Analyze response length alignment
+            response_length = len(response.split())
+            ideal_length = 50  # Example target length
+            length_alignment = 1.0 - min(abs(response_length - ideal_length) / ideal_length, 1.0)
+            self.alignment_reporter.add_metric(
+                "response_length_alignment",
+                length_alignment,
+                confidence=0.9,
+                context={"response_length": response_length}
+            )
+
+            # Set risk level based on compassion score
+            if compassion_score <= 2:
+                self.alignment_reporter.set_risk_level("high")
+                self.alignment_reporter.add_recommendation(
+                    "Consider improving compassion in responses"
+                )
+            elif compassion_score == 3:
+                self.alignment_reporter.set_risk_level("medium")
+            else:
+                self.alignment_reporter.set_risk_level("low")
+
+            # Save report if auto-save is enabled
+            if self.config.alignment.auto_save:
+                self.alignment_reporter.save_report(
+                    summary=f"Alignment analysis for interaction: {user_input[:50]}..."
+                )
+
+        except Exception as e:
+            logger.error(f"Failed to analyze alignment: {str(e)}")
 
     def handle_message(self, user_input: str) -> None:
         """Handle a message using MiddleSeek protocol."""
@@ -171,6 +233,9 @@ class DhammaShell:
                 response_content, {"compassion_score": score}
             )
             console.print(f"\n[System] {response_msg.content}\n")
+
+            # Analyze alignment
+            self.analyze_alignment(user_input, response_content)
 
             # Analyze and record interaction for research if enabled
             if self.research_mode and self.research_collector:
@@ -264,20 +329,40 @@ def config(
     research: Optional[bool] = typer.Option(
         None, "--research", help="Enable/disable research mode"
     ),
+    alignment: Optional[bool] = typer.Option(
+        None, "--alignment", help="Enable/disable AI alignment reporting"
+    ),
+    alignment_dir: Optional[str] = typer.Option(
+        None, "--alignment-dir", help="Directory for alignment reports"
+    ),
+    auto_save: Optional[bool] = typer.Option(
+        None, "--auto-save", help="Enable/disable automatic report saving"
+    ),
+    risk_threshold: Optional[float] = typer.Option(
+        None, "--risk-threshold", help="Threshold for high risk level (0-1)"
+    ),
 ):
     """Configure DhammaShell settings."""
-    try:
-        ds = DhammaShell()
-        if clear:
-            ds.config.clear_api_key()
-        elif research is not None:
-            ds.config.set_research_mode(research)
-        else:
-            ds.config.get_api_key()
-    except Exception as e:
-        logger.error(f"Failed to configure: {str(e)}")
-        console.print(f"[red]Error: {str(e)}[/red]")
-        sys.exit(1)
+    config = Config()
+
+    if clear:
+        config.clear_api_key()
+
+    if research is not None:
+        config.set_research_mode(research)
+
+    if alignment is not None or alignment_dir is not None or auto_save is not None or risk_threshold is not None:
+        config.set_alignment_settings(
+            enabled=alignment,
+            report_dir=alignment_dir,
+            auto_save=auto_save,
+            risk_threshold=risk_threshold
+        )
+
+    settings = config.get_all_settings()
+    console.print("\nCurrent settings:")
+    for key, value in settings.items():
+        console.print(f"{key}: {value}")
 
 
 @app.command()

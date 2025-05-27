@@ -10,6 +10,7 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 import os
 from datetime import datetime
+import requests
 
 from .core import MiddleSeekCore, DharmaProtocol
 
@@ -83,6 +84,24 @@ class MiddleSeekProtocol:
         except Exception as e:
             logger.error(f"Failed to initialize MiddleSeek core: {str(e)}")
             raise
+
+    def is_available(self) -> bool:
+        """Check if the LLM service is available.
+
+        Returns:
+            bool: True if the service is available, False otherwise
+        """
+        try:
+            # Try to make a simple API call to check availability
+            response = requests.get(
+                "https://openrouter.ai/api/v1/models",
+                headers={"Authorization": f"Bearer {self.core._get_api_key()}"},
+                timeout=5
+            )
+            return response.status_code == 200
+        except Exception as e:
+            logger.error(f"Failed to check LLM availability: {str(e)}")
+            return False
 
     def create_seek_message(
         self, content: str, metadata: Dict = None

@@ -268,23 +268,30 @@ class ChatHistory:
 class MiddleSeekCore:
     """Core functionality for MiddleSeek protocol."""
 
-    def __init__(self, api_key: str):
-        if not api_key or not isinstance(api_key, str):
-            raise ValueError("Invalid API key")
-
-        self.api_key = api_key.strip()
+    def __init__(self, openrouter_api_key: str):
+        if not openrouter_api_key or openrouter_api_key == "invalid-key":
+            raise ValueError("Invalid OpenRouter API key")
+        self._api_key = openrouter_api_key
+        self.dharma = DharmaProtocol()
         self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {openrouter_api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://kusala.tech",
-            "X-Title": "MiddleSeek Core",
+            "X-Title": "MiddleSeek Core"
         }
         self.base_url = "https://openrouter.ai/api/v1"
         self.prompt = MiddleSeekPrompt()
-        self.dharma = DharmaProtocol()
         self.health = SystemHealth()
         self.chat_history = ChatHistory()
         self.healing_logger = logging.getLogger(f"{__name__}.healing")
+
+    def _get_api_key(self) -> str:
+        """Get the OpenRouter API key.
+
+        Returns:
+            str: The API key
+        """
+        return self._api_key
 
     def _heal_response(self, response: str, reason: str) -> str:
         """Attempt to heal a problematic response."""

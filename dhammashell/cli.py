@@ -13,6 +13,7 @@ from .empathy_research import (
     EmpathyMetrics,
     ResearchReport,
 )
+from .empathy_research.pre_post_test import TestType
 from .main import DhammaShell
 
 
@@ -49,19 +50,69 @@ def research_report(session_id, output_format, no_visualizations):
             session_data = collector.load_session(sessions[-1])
 
         report_generator = ResearchReport()
-        report = report_generator.generate_report(
-            session_data,
-            output_format=output_format,
-            include_visualizations=not no_visualizations,
-        )
+        report_file = report_generator.generate_report(session_data)
+
+        # Read the generated report
+        with open(report_file) as f:
+            report_data = json.load(f)
 
         if output_format == "text":
-            click.echo(report)
+            # Format as text
+            click.echo("\nDhammaShell Research Report")
+            click.echo("=" * 50)
+
+            # Session Info
+            click.echo("\nSession Information:")
+            click.echo(f"Session ID: {report_data['session_id']}")
+            click.echo(f"Start Time: {report_data['start_time']}")
+            click.echo(f"End Time: {report_data['end_time']}")
+
+            # Metrics Summary
+            if report_data["metrics_summary"]:
+                click.echo("\nMetrics Summary:")
+                for metric, stats in report_data["metrics_summary"].items():
+                    click.echo(f"\n{metric}:")
+                    for stat, value in stats.items():
+                        click.echo(f"  {stat}: {value:.2f}")
+
+            # Interaction Analysis
+            if report_data["interaction_analysis"]:
+                click.echo("\nInteraction Analysis:")
+                for key, value in report_data["interaction_analysis"].items():
+                    click.echo(f"  {key}: {value}")
+
+            # Empathy Test Analysis
+            if "empathy_test_analysis" in report_data:
+                click.echo("\nEmpathy Test Analysis:")
+                test_analysis = report_data["empathy_test_analysis"]
+
+                if "pre_test" in test_analysis:
+                    click.echo("\nPre-Test Results:")
+                    pre = test_analysis["pre_test"]
+                    click.echo(f"  Average Score: {pre['average_score']:.2f}")
+                    click.echo(f"  Min Score: {pre['min_score']:.2f}")
+                    click.echo(f"  Max Score: {pre['max_score']:.2f}")
+
+                if "post_test" in test_analysis:
+                    click.echo("\nPost-Test Results:")
+                    post = test_analysis["post_test"]
+                    click.echo(f"  Average Score: {post['average_score']:.2f}")
+                    click.echo(f"  Min Score: {post['min_score']:.2f}")
+                    click.echo(f"  Max Score: {post['max_score']:.2f}")
+
+                if "comparison" in test_analysis:
+                    click.echo("\nComparison:")
+                    comp = test_analysis["comparison"]
+                    click.echo(f"  Score Change: {comp['score_change']:.2f}")
+                    click.echo(f"  Percent Change: {comp['percent_change']:.1f}%")
+                    click.echo(f"  Improvement: {'Yes' if comp['improvement'] else 'No'}")
         else:
-            # Save JSON report to file
-            output_file = Path(f"research_report_{session_data['session_id']}.json")
-            output_file.write_text(report)
-            click.echo(f"JSON report saved to {output_file}")
+            # Output as JSON
+            click.echo(json.dumps(report_data, indent=2))
+
+        click.echo(f"\nReport saved to: {report_file}")
+        if not no_visualizations:
+            click.echo("Visualizations generated in research_reports directory")
 
     except Exception as e:
         click.echo(f"Error generating research report: {str(e)}", err=True)
@@ -127,21 +178,25 @@ def update_research(session_id: Optional[str], output_format: str):
 
         # Generate report
         report_generator = ResearchReport()
-        report = report_generator.generate_report(
-            collector.load_session(research_session_id), output_format=output_format
+        report_file = report_generator.generate_report(
+            collector.load_session(research_session_id)
         )
 
+        # Read and display the report
+        with open(report_file) as f:
+            report_data = json.load(f)
+
         if output_format == "text":
-            click.echo(report)
+            click.echo("\nResearch Report:")
+            click.echo("=" * 50)
+            click.echo(json.dumps(report_data, indent=2))
         else:
-            # Save JSON report to file
-            output_file = Path(f"research_report_{research_session_id}.json")
-            output_file.write_text(report)
-            click.echo(f"JSON report saved to {output_file}")
+            click.echo(json.dumps(report_data, indent=2))
 
         click.echo(f"\nResearch data updated successfully!")
         click.echo(f"Session ID: {research_session_id}")
         click.echo(f"Data saved to: {filepath}")
+        click.echo(f"Report saved to: {report_file}")
 
     except Exception as e:
         click.echo(f"Error updating research data: {str(e)}", err=True)
@@ -194,6 +249,118 @@ def show():
     except Exception as e:
         click.echo(f"Error: {str(e)}", err=True)
         raise click.Abort()
+
+
+@cli.command()
+@click.option('--type', type=click.Choice(['pre', 'post']), required=True, help='Type of empathy test')
+def start_empathy_test(type: str):
+    """Start a pre or post empathy assessment test"""
+    shell = DhammaShell()
+
+    if not shell.research_mode:
+        click.echo("Error: Research mode must be enabled to start empathy test")
+        return
+
+    test_type = TestType.PRE if type == 'pre' else TestType.POST
+    test_config = shell.start_empathy_test(test_type)
+
+    click.echo(f"\nStarting {type} empathy test...")
+    click.echo("Please answer the following questions:\n")
+
+    for question in test_config["questions"]:
+        click.echo(f"\n{question['question']}")
+        if 'scale' in question:
+            click.echo(f"Scale: {question['scale']}")
+            click.echo(f"Description: {question['description']}")
+
+        response = click.prompt("Your response", type=str)
+        shell.record_test_response(question["id"], response)
+
+        # Follow-up questions are handled automatically in record_test_response
+        # if LLM is available
+
+    # Complete the test and get analysis
+    analysis = shell.complete_empathy_test()
+
+    click.echo("\nTest completed! Here's your analysis:")
+
+    # Display scores
+    if "scores" in analysis:
+        click.echo("\nScores:")
+        for metric, value in analysis["scores"].items():
+            click.echo(f"{metric}: {value:.2f}")
+
+    # Display insights
+    if "insights" in analysis:
+        click.echo("\nInsights:")
+        for insight in analysis["insights"]:
+            click.echo(f"\nQuestion: {insight['question_id']}")
+            click.echo(f"Response: {insight['response']}")
+
+            # Display follow-ups if available
+            if "follow_ups" in insight:
+                click.echo("\nFollow-up Discussion:")
+                for follow_up in insight["follow_ups"]:
+                    click.echo(f"Q: {follow_up['follow_up']}")
+                    click.echo(f"A: {follow_up['response']}")
+                    if "llm_analysis" in follow_up:
+                        click.echo(f"Analysis: {follow_up['llm_analysis']}")
+
+            # Display LLM analysis if available
+            if "llm_analysis" in insight:
+                click.echo(f"\nAnalysis: {insight['llm_analysis']}")
+
+    # Save test results
+    test_file = shell.empathy_test.save_test()
+    click.echo(f"\nTest results saved to: {test_file}")
+    return
+
+
+@cli.command()
+@click.option('--test-id', required=True, help='ID of the test to analyze')
+def analyze_test(test_id: str):
+    """Analyze a completed empathy test"""
+    shell = DhammaShell()
+
+    if not shell.research_mode:
+        click.echo("Error: Research mode must be enabled to analyze tests")
+        return
+
+    test_file = Path("research_data") / f"{test_id}.json"
+    if not test_file.exists():
+        click.echo(f"Error: Test file {test_file} not found")
+        return
+
+    with open(test_file) as f:
+        test_data = json.load(f)
+
+    click.echo(f"\nAnalyzing {test_data['test_type']} test from {test_data['start_time']}")
+
+    # Calculate and display scores
+    if "scores" in test_data:
+        click.echo("\nScores:")
+        for metric, value in test_data["scores"].items():
+            click.echo(f"{metric}: {value:.2f}")
+
+    # Display insights and follow-ups
+    if "insights" in test_data:
+        click.echo("\nInsights:")
+        for insight in test_data["insights"]:
+            click.echo(f"\nQuestion: {insight['question_id']}")
+            click.echo(f"Response: {insight['response']}")
+
+            # Display follow-ups if available
+            if "follow_ups" in insight:
+                click.echo("\nFollow-up Discussion:")
+                for follow_up in insight["follow_ups"]:
+                    click.echo(f"Q: {follow_up['follow_up']}")
+                    click.echo(f"A: {follow_up['response']}")
+                    if "llm_analysis" in follow_up:
+                        click.echo(f"Analysis: {follow_up['llm_analysis']}")
+
+            # Display LLM analysis if available
+            if "llm_analysis" in insight:
+                click.echo(f"\nAnalysis: {insight['llm_analysis']}")
 
 
 def main():

@@ -3,7 +3,7 @@
 import sys
 import time
 import logging
-from typing import Optional
+from typing import Optional, List, Dict
 from pathlib import Path
 
 import typer
@@ -18,6 +18,7 @@ from prompt_toolkit.formatted_text import HTML
 from .middleseek import MiddleSeekProtocol, MessageType, MiddleSeekMessage
 from .config import Config
 from .empathy_research import EmpathyAnalyzer, ResearchDataCollector
+from .empathy_research.pre_post_test import EmpathyTest, TestType
 
 # Configure logging
 logging.basicConfig(
@@ -48,6 +49,7 @@ class DhammaShell:
         self._middleseek = None
         self._empathy_analyzer = None
         self._research_collector = None
+        self._empathy_test = None
         self.conversation_context = []
 
     @property
@@ -77,6 +79,13 @@ class DhammaShell:
             self._research_collector = ResearchDataCollector()
             self._research_collector.start_session()
         return self._research_collector
+
+    @property
+    def empathy_test(self) -> Optional[EmpathyTest]:
+        """Get or initialize empathy test if research mode is enabled."""
+        if self.research_mode and self._empathy_test is None:
+            self._empathy_test = EmpathyTest()
+        return self._empathy_test
 
     def analyze_compassion(self, text: str) -> tuple[int, str]:
         """Analyze compassion level in text."""
@@ -231,6 +240,79 @@ class DhammaShell:
                     self.research_collector.save_session()
                 except Exception as e:
                     logger.error(f"Failed to save research data: {str(e)}")
+
+    def start_empathy_test(self, test_type: TestType) -> Dict:
+        """
+        Start a pre or post empathy test
+
+        Args:
+            test_type: Type of test (pre or post)
+
+        Returns:
+            Test configuration including questions
+        """
+        if not self.research_mode:
+            raise ValueError("Research mode must be enabled to start empathy test")
+
+        test_config = self.empathy_test.start_test(test_type)
+
+        # Update LLM availability status
+        if self.middleseek.is_available():
+            self.empathy_test.current_test["llm_available"] = True
+
+        return test_config
+
+    def record_test_response(self, question_id: str, response: str) -> None:
+        """
+        Record a response to a test question
+
+        Args:
+            question_id: ID of the question being answered
+            response: User's response
+        """
+        if not self.research_mode or not self.empathy_test:
+            raise ValueError("Research mode must be enabled to record test responses")
+
+        self.empathy_test.record_response(question_id, response)
+
+        # If LLM is available and this is an open-ended question, ask follow-up
+        if (self.middleseek.is_available() and
+            self.empathy_test.current_test["llm_available"] and
+            question_id in ["empathy_4", "empathy_5", "empathy_6"]):
+
+            # Get the follow-up prompt for this question
+            question = next(
+                q for q in self.empathy_test.EXTENDED_QUESTIONS
+                if q["id"] == question_id
+            )
+            follow_up = question["follow_up_prompt"]
+
+            # Get user's response to follow-up
+            console.print(f"\n[Follow-up] {follow_up}")
+            follow_up_response = self.session.prompt(
+                HTML("<prompt>[You] ➜ </prompt>"), style=self.style
+            )
+
+            # Record the follow-up interaction
+            self.empathy_test.record_follow_up(question_id, follow_up, follow_up_response)
+
+    def complete_empathy_test(self) -> Dict:
+        """
+        Complete the current empathy test and get analysis
+
+        Returns:
+            Analysis results including scores and insights
+        """
+        if not self.research_mode or not self.empathy_test:
+            raise ValueError("Research mode must be enabled to complete empathy test")
+
+        # Save test results
+        test_file = self.empathy_test.save_test()
+
+        # Get analysis
+        analysis = self.empathy_test.analyze_responses()
+
+        return analysis
 
 
 @app.command()

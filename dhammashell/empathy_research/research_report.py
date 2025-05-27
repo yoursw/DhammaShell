@@ -7,6 +7,10 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
+import statistics
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
 
 
 class ResearchReport:
@@ -46,6 +50,17 @@ class ResearchReport:
             },
             "methodology": "Evaluates presence of mindful language, present-moment awareness, and balanced response patterns.",
         },
+        "empathy_test": {
+            "name": "Empathy Assessment",
+            "description": "Measures user's self-reported empathy levels before and after interaction.",
+            "scale": "1.0 to 5.0",
+            "interpretation": {
+                "high": "> 4.0: Strong empathy",
+                "medium": "2.5 - 4.0: Moderate empathy",
+                "low": "< 2.5: Limited empathy",
+            },
+            "methodology": "Combines self-reported assessments with qualitative analysis of open-ended responses.",
+        },
     }
 
     def __init__(self, output_dir: str = "research_reports"):
@@ -58,58 +73,40 @@ class ResearchReport:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
 
-    def generate_report(
-        self,
-        session_data: Dict,
-        output_format: str = "text",
-        include_visualizations: bool = True,
-    ) -> str:
+    def generate_report(self, session_data: Dict, test_data: Optional[Dict] = None) -> Path:
         """
-        Generate a research report from session data
+        Generate a comprehensive research report
 
         Args:
-            session_data: Session data from ResearchDataCollector
-            output_format: Output format ('text' or 'json')
-            include_visualizations: Whether to generate visualizations
+            session_data: Session interaction data
+            test_data: Optional pre/post test data
 
         Returns:
-            Generated report in the specified format
+            Path to the generated report
         """
-        # Extract metrics from session data
-        metrics = []
-        for interaction in session_data.get("interactions", []):
-            if "analysis" in interaction and "metrics" in interaction["analysis"]:
-                for metric_name, value in interaction["analysis"]["metrics"].items():
-                    metrics.append(
-                        {
-                            "name": metric_name,
-                            "value": float(value),
-                            "timestamp": interaction.get(
-                                "timestamp", datetime.now().isoformat()
-                            ),
-                        }
-                    )
-
-        # Generate report sections
         report = {
-            "session_info": {
-                "session_id": session_data.get("session_id", "unknown"),
-                "start_time": session_data.get(
-                    "start_time", datetime.now().isoformat()
-                ),
-                "total_interactions": len(session_data.get("interactions", [])),
-            },
-            "metrics_summary": self._summarize_metrics(metrics),
-            "interaction_analysis": self._analyze_interactions(
-                session_data.get("interactions", [])
-            ),
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_data.get("session_id"),
+            "start_time": session_data.get("start_time"),
+            "end_time": datetime.now().isoformat(),
+            "metrics_summary": self._summarize_metrics(session_data.get("metrics", [])),
+            "interaction_analysis": self._analyze_interactions(session_data.get("interactions", [])),
             "metric_descriptions": self.METRIC_DESCRIPTIONS,
         }
 
-        if output_format == "json":
-            return json.dumps(report, indent=2)
-        else:
-            return self._format_text_report(report)
+        # Add pre/post test analysis if available
+        if test_data:
+            report["empathy_test_analysis"] = self._analyze_empathy_tests(test_data)
+
+        # Generate report file
+        report_file = self.output_dir / f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        with open(report_file, 'w') as f:
+            json.dump(report, f, indent=2)
+
+        # Generate visualizations
+        self._generate_visualizations(report)
+
+        return report_file
 
     def _summarize_metrics(self, metrics: List[Dict]) -> Dict:
         """Generate summary statistics for metrics"""
@@ -151,6 +148,100 @@ class ResearchReport:
             "first_interaction": interactions[0].get("timestamp", "unknown"),
             "last_interaction": interactions[-1].get("timestamp", "unknown"),
         }
+
+    def _analyze_empathy_tests(self, test_data: Dict) -> Dict:
+        """
+        Analyze pre and post empathy test results
+
+        Args:
+            test_data: Dictionary containing pre and post test data
+
+        Returns:
+            Analysis results
+        """
+        analysis = {
+            "pre_test": {},
+            "post_test": {},
+            "comparison": {}
+        }
+
+        # Analyze pre-test
+        if "pre_test" in test_data:
+            pre_scores = test_data["pre_test"].get("scores", {})
+            analysis["pre_test"] = {
+                "average_score": pre_scores.get("average", 0),
+                "min_score": pre_scores.get("min", 0),
+                "max_score": pre_scores.get("max", 0),
+                "insights": test_data["pre_test"].get("insights", [])
+            }
+
+        # Analyze post-test
+        if "post_test" in test_data:
+            post_scores = test_data["post_test"].get("scores", {})
+            analysis["post_test"] = {
+                "average_score": post_scores.get("average", 0),
+                "min_score": post_scores.get("min", 0),
+                "max_score": post_scores.get("max", 0),
+                "insights": test_data["post_test"].get("insights", [])
+            }
+
+        # Compare pre and post tests
+        if "pre_test" in test_data and "post_test" in test_data:
+            pre_avg = analysis["pre_test"]["average_score"]
+            post_avg = analysis["post_test"]["average_score"]
+
+            analysis["comparison"] = {
+                "score_change": post_avg - pre_avg,
+                "percent_change": ((post_avg - pre_avg) / pre_avg * 100) if pre_avg > 0 else 0,
+                "improvement": post_avg > pre_avg
+            }
+
+        return analysis
+
+    def _generate_visualizations(self, report: Dict):
+        """
+        Generate visualizations for the report
+
+        Args:
+            report: Report data
+        """
+        # Set style
+        plt.style.use("seaborn")
+        sns.set_palette("husl")
+
+        # Create figure with subplots
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        fig.suptitle("Empathy Research Analysis", fontsize=16)
+
+        # Plot empathy test scores if available
+        if "empathy_test_analysis" in report:
+            pre_score = report["empathy_test_analysis"]["pre_test"]["average_score"]
+            post_score = report["empathy_test_analysis"]["post_test"]["average_score"]
+
+            axes[0, 0].bar(["Pre-Test", "Post-Test"], [pre_score, post_score])
+            axes[0, 0].set_title("Empathy Test Scores")
+            axes[0, 0].set_ylim(0, 5)
+            axes[0, 0].set_ylabel("Score")
+
+        # Plot other metrics
+        row = 0
+        col = 1
+        for metric, stats in report["metrics_summary"].items():
+            if metric != "empathy_test":
+                sns.histplot(data=stats["values"], ax=axes[row, col], kde=True)
+                axes[row, col].set_title(f'{metric.replace("_", " ").title()} Distribution')
+                axes[row, col].set_xlabel("Score")
+                axes[row, col].set_ylabel("Frequency")
+
+                col += 1
+                if col > 1:
+                    col = 0
+                    row += 1
+
+        # Save plot
+        plt.tight_layout()
+        plt.savefig(self.output_dir / "research_analysis.png")
+        plt.close()
 
     def _format_text_report(self, report: Dict) -> str:
         """Format report as text"""
@@ -252,43 +343,6 @@ class ResearchReport:
             }
 
         return stats
-
-    def _generate_visualizations(self, metrics: Dict[str, List[float]]):
-        """Generate data visualizations"""
-        # Set style
-        plt.style.use("seaborn")
-        sns.set_palette("husl")
-
-        # Create figure with subplots
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-        fig.suptitle("Empathy Research Metrics Analysis", fontsize=16)
-
-        # Distribution plots
-        for i, (metric_name, values) in enumerate(metrics.items()):
-            row = i // 2
-            col = i % 2
-            sns.histplot(data=values, ax=axes[row, col], kde=True)
-            axes[row, col].set_title(
-                f'{metric_name.replace("_", " ").title()} Distribution'
-            )
-            axes[row, col].set_xlabel("Score")
-            axes[row, col].set_ylabel("Frequency")
-
-        # Save plot
-        plt.tight_layout()
-        plt.savefig(self.data_dir / "metrics_distribution.png")
-        plt.close()
-
-        # Correlation heatmap
-        plt.figure(figsize=(10, 8))
-        correlation_data = {name: values for name, values in metrics.items()}
-        sns.heatmap(
-            pd.DataFrame(correlation_data).corr(), annot=True, cmap="coolwarm", center=0
-        )
-        plt.title("Metric Correlations")
-        plt.tight_layout()
-        plt.savefig(self.data_dir / "metric_correlations.png")
-        plt.close()
 
     def _format_json_report(self, session_data: Dict, stats: Dict) -> str:
         """Format report as JSON"""

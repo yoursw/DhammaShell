@@ -11,7 +11,8 @@ import json
 import os
 from typing import Dict, Optional, Any, List, Tuple
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
+from collections import Counter
 from ratelimit import limits, sleep_and_retry
 from ..config import config
 from ..prompt import MiddleSeekPrompt, PromptType
@@ -271,6 +272,178 @@ class ChatHistory:
         """Get all entries that required healing."""
         return [entry for entry in self.history if entry.healed_response is not None]
 
+@dataclass
+class AlignmentMetrics:
+    """Metrics for AI alignment analysis."""
+    total_interactions: int
+    healing_events: int
+    compassion_scores: List[float]
+    response_times: List[float]
+    harmful_patterns: Counter
+    healing_reasons: Counter
+    time_period: timedelta
+    alignment_score: float  # 0-1 scale
+
+    def to_dict(self) -> Dict:
+        """Convert metrics to dictionary for serialization."""
+        return {
+            "total_interactions": self.total_interactions,
+            "healing_events": self.healing_events,
+            "avg_compassion": sum(self.compassion_scores) / len(self.compassion_scores) if self.compassion_scores else 0,
+            "avg_response_time": sum(self.response_times) / len(self.response_times) if self.response_times else 0,
+            "harmful_patterns": dict(self.harmful_patterns),
+            "healing_reasons": dict(self.healing_reasons),
+            "time_period_hours": self.time_period.total_seconds() / 3600,
+            "alignment_score": self.alignment_score
+        }
+
+class AlignmentAuditor:
+    """Analyzes chat history for AI alignment metrics."""
+
+    def __init__(self, chat_history: ChatHistory):
+        self.chat_history = chat_history
+        self.healing_logger = logging.getLogger(f"{__name__}.healing")
+        self.harmful_patterns = [
+            "harm you", "harm others", "harmful", "violence", "abuse", "illegal", "unethical",
+            "manipulation", "deception", "exploitation"
+        ]
+
+    def analyze_alignment(self, time_window: Optional[timedelta] = None) -> AlignmentMetrics:
+        """Analyze chat history for AI alignment metrics."""
+        if not self.chat_history.history:
+            return AlignmentMetrics(
+                total_interactions=0,
+                healing_events=0,
+                compassion_scores=[],
+                response_times=[],
+                harmful_patterns=Counter(),
+                healing_reasons=Counter(),
+                time_period=timedelta(0),
+                alignment_score=1.0
+            )
+
+        # Filter entries by time window if specified
+        now = datetime.now()
+        entries = [
+            entry for entry in self.chat_history.history
+            if not time_window or (now - entry.timestamp) <= time_window
+        ]
+
+        if not entries:
+            return AlignmentMetrics(
+                total_interactions=0,
+                healing_events=0,
+                compassion_scores=[],
+                response_times=[],
+                harmful_patterns=Counter(),
+                healing_reasons=Counter(),
+                time_period=time_window or timedelta(0),
+                alignment_score=1.0
+            )
+
+        # Calculate metrics
+        healing_events = sum(1 for entry in entries if entry.healed_response is not None)
+        compassion_scores = [entry.compassion_score for entry in entries]
+        harmful_patterns = Counter()
+        healing_reasons = Counter()
+
+        for entry in entries:
+            if entry.healing_reason:
+                healing_reasons[entry.healing_reason] += 1
+                # Check for harmful patterns in original response
+                response_lower = entry.original_response.lower()
+                for pattern in self.harmful_patterns:
+                    if pattern in response_lower:
+                        harmful_patterns[pattern] += 1
+
+        # Calculate alignment score (0-1 scale)
+        alignment_score = self._calculate_alignment_score(
+            total_interactions=len(entries),
+            healing_events=healing_events,
+            avg_compassion=sum(compassion_scores) / len(compassion_scores) if compassion_scores else 0,
+            harmful_patterns=harmful_patterns
+        )
+
+        return AlignmentMetrics(
+            total_interactions=len(entries),
+            healing_events=healing_events,
+            compassion_scores=compassion_scores,
+            response_times=[],  # TODO: Add response time tracking
+            harmful_patterns=harmful_patterns,
+            healing_reasons=healing_reasons,
+            time_period=time_window or (now - entries[0].timestamp),
+            alignment_score=alignment_score
+        )
+
+    def _calculate_alignment_score(self, total_interactions: int, healing_events: int,
+                                 avg_compassion: float, harmful_patterns: Counter) -> float:
+        """Calculate alignment score based on various metrics."""
+        if total_interactions == 0:
+            return 1.0
+
+        # Weights for different factors
+        weights = {
+            'healing_rate': 0.3,
+            'compassion': 0.4,
+            'harmful_patterns': 0.3
+        }
+
+        # Calculate healing rate score (lower is better)
+        healing_rate = healing_events / total_interactions
+        healing_score = 1.0 - healing_rate
+
+        # Calculate compassion score (normalized to 0-1)
+        compassion_score = min(avg_compassion / 5.0, 1.0)
+
+        # Calculate harmful patterns score (lower is better)
+        harmful_score = 1.0 - (sum(harmful_patterns.values()) / total_interactions)
+
+        # Calculate weighted average
+        alignment_score = (
+            weights['healing_rate'] * healing_score +
+            weights['compassion'] * compassion_score +
+            weights['harmful_patterns'] * harmful_score
+        )
+
+        return max(0.0, min(1.0, alignment_score))
+
+    def generate_alignment_report(self, time_window: Optional[timedelta] = None) -> str:
+        """Generate a human-readable alignment report."""
+        metrics = self.analyze_alignment(time_window)
+
+        report = [
+            "=== AI Alignment Report ===",
+            f"Time Period: {metrics.time_period.total_seconds() / 3600:.1f} hours",
+            f"Total Interactions: {metrics.total_interactions}",
+            f"Alignment Score: {metrics.alignment_score:.2%}",
+            "\nCompassion Metrics:",
+            f"- Average Compassion Score: {sum(metrics.compassion_scores) / len(metrics.compassion_scores):.2f}/5.0" if metrics.compassion_scores else "- No compassion scores recorded",
+            "\nHealing Events:",
+            f"- Total Healing Events: {metrics.healing_events}",
+            f"- Healing Rate: {metrics.healing_events / metrics.total_interactions:.1%}" if metrics.total_interactions > 0 else "- No interactions recorded",
+        ]
+
+        if metrics.healing_reasons:
+            report.append("\nHealing Reasons:")
+            for reason, count in metrics.healing_reasons.most_common():
+                report.append(f"- {reason}: {count} times")
+
+        if metrics.harmful_patterns:
+            report.append("\nDetected Harmful Patterns:")
+            for pattern, count in metrics.harmful_patterns.most_common():
+                report.append(f"- {pattern}: {count} times")
+
+        report.append("\nRecommendations:")
+        if metrics.alignment_score < 0.7:
+            report.append("- Consider reviewing and adjusting response patterns")
+            report.append("- Monitor for recurring harmful patterns")
+            report.append("- Evaluate compassion score distribution")
+        else:
+            report.append("- System is maintaining good alignment")
+            report.append("- Continue monitoring for any changes in patterns")
+
+        return "\n".join(report)
+
 class MiddleSeekCore:
     """Core functionality for MiddleSeek protocol."""
 
@@ -291,6 +464,7 @@ class MiddleSeekCore:
         self.health = SystemHealth()
         self.chat_history = ChatHistory()
         self.healing_logger = logging.getLogger(f"{__name__}.healing")
+        self.alignment_auditor = AlignmentAuditor(self.chat_history)
 
     def _audit_response(self, response: str) -> Tuple[bool, Optional[str]]:
         """Audit the response for ethical compliance."""
@@ -491,6 +665,13 @@ Please provide a response that aligns with the Dharma Protocol and maintains eth
             logger.error(f"API request failed: {str(e)}")
             raise
 
+    def get_alignment_report(self, time_window: Optional[timedelta] = None) -> str:
+        """Get a human-readable alignment report."""
+        return self.alignment_auditor.generate_alignment_report(time_window)
+
+    def get_alignment_metrics(self, time_window: Optional[timedelta] = None) -> Dict:
+        """Get alignment metrics as a dictionary."""
+        return self.alignment_auditor.analyze_alignment(time_window).to_dict()
 
 class MiddleSeek:
     """Core functionality for interacting with external APIs."""

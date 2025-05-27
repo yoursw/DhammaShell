@@ -9,7 +9,8 @@ import logging
 from dataclasses import dataclass, asdict
 from enum import Enum
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+import uuid
 
 from .core import MiddleSeekCore, DharmaProtocol
 
@@ -59,6 +60,8 @@ class MiddleSeekMessage:
 
 
 class MiddleSeekProtocol:
+    """Protocol for mindful communication."""
+
     def __init__(self, api_key: Optional[str] = None):
         """Initialize MiddleSeek protocol.
 
@@ -80,6 +83,8 @@ class MiddleSeekProtocol:
         try:
             self.core = MiddleSeekCore(api_key)
             self.dharma = DharmaProtocol()
+            self.conversation_history = []
+            self.current_session_id = str(uuid.uuid4())
         except Exception as e:
             logger.error(f"Failed to initialize MiddleSeek core: {str(e)}")
             raise
@@ -292,3 +297,67 @@ class MiddleSeekProtocol:
         except Exception as e:
             logger.error(f"Failed to import conversation: {str(e)}")
             raise ValueError(f"Failed to import conversation: {str(e)}")
+
+    def get_alignment_report(self, time_window: Optional[timedelta] = None) -> str:
+        """Get a human-readable alignment report."""
+        return self.core.get_alignment_report(time_window)
+
+    def get_alignment_metrics(self, time_window: Optional[timedelta] = None) -> Dict:
+        """Get alignment metrics as a dictionary."""
+        return self.core.get_alignment_metrics(time_window)
+
+    def get_latest_conversation(self) -> Dict:
+        """Get the most recent conversation data.
+
+        Returns:
+            Dictionary containing conversation data
+        """
+        try:
+            # Convert history to conversation format
+            interactions = []
+            for msg in self.history:
+                if msg.type == MessageType.SEEK:
+                    # Find corresponding response
+                    response = None
+                    for resp in self.history:
+                        if (resp.type == MessageType.RESPOND and
+                            resp.timestamp > msg.timestamp):
+                            response = resp
+                            break
+
+                    if response:
+                        interactions.append({
+                            "timestamp": msg.timestamp,
+                            "user_input": msg.content,
+                            "system_response": response.content,
+                            "analysis": {
+                                "compassion_score": 3,  # Default score
+                                "metadata": msg.metadata or {}
+                            }
+                        })
+
+            return {
+                "session_id": self.current_session_id,
+                "start_time": self.history[0].timestamp if self.history else datetime.now().isoformat(),
+                "interactions": interactions
+            }
+        except Exception as e:
+            logger.error(f"Failed to get latest conversation: {str(e)}")
+            return {
+                "session_id": self.current_session_id,
+                "start_time": datetime.now().isoformat(),
+                "interactions": []
+            }
+
+    def get_conversation_history(self, session_id: str) -> Dict:
+        """Get conversation history for a specific session.
+
+        Args:
+            session_id: The session ID to retrieve
+
+        Returns:
+            Dictionary containing conversation data
+        """
+        # For now, just return the latest conversation
+        # TODO: Implement proper session-based history retrieval
+        return self.get_latest_conversation()

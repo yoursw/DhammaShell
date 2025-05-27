@@ -12,7 +12,6 @@ from .empathy_research import (
     ResearchDataCollector,
     EmpathyMetrics,
     ResearchReport,
-    AuditReport,
 )
 from .main import DhammaShell
 
@@ -79,43 +78,78 @@ def chat(calm: bool):
         click.echo(f"Error in chat session: {str(e)}", err=True)
 
 
-@cli.command(name="audit")
+@cli.group()
+def audit():
+    """Generate various types of audit reports"""
+    pass
+
+
+@audit.command(name="compliance")
 @click.option("--session-id", help="Session ID to audit")
 @click.option(
     "--confidence", default=0.99999, help="Required confidence level (default: 99.999%)"
 )
 @click.option("--sigma", default=6, help="Required sigma level (default: 6)")
-def audit(session_id: Optional[str], confidence: float, sigma: int):
+@click.option(
+    "--output-format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    help="Output format",
+)
+def audit_compliance(session_id: Optional[str], confidence: float, sigma: int, output_format: str):
     """Generate compliance audit report"""
     try:
         # Initialize components
-        data_collector = ResearchDataCollector()
-        audit_report = AuditReport()
+        ds = DhammaShell()
 
         # Get session data
         if session_id:
-            session_data = data_collector.load_session(session_id)
+            session_data = ds.middleseek.get_conversation_history(session_id)
         else:
             # Get the most recent session
-            sessions = data_collector.list_sessions()
-            if not sessions:
-                click.echo("No sessions found")
-                return
-            session_data = data_collector.load_session(sessions[-1])
+            session_data = ds.middleseek.get_latest_conversation()
 
         if not session_data:
             click.echo("No session data found")
             return
 
-        # Generate audit report
-        report = audit_report.generate_audit_report(
-            session_data=session_data, confidence_level=confidence, sigma_level=sigma
-        )
-
-        click.echo(report)
+        # For now, just echo that compliance audit is not implemented
+        click.echo("Compliance audit functionality is not yet implemented")
+        return
 
     except Exception as e:
         click.echo(f"Error generating audit report: {str(e)}", err=True)
+
+
+@audit.command(name="alignment")
+@click.option("--hours", type=int, help="Time window in hours to analyze")
+@click.option("--output-format", type=click.Choice(["text", "json"]), default="text", help="Output format")
+def audit_alignment(hours: Optional[int], output_format: str):
+    """Generate AI alignment analysis report"""
+    try:
+        # Initialize DhammaShell
+        ds = DhammaShell()
+
+        # Calculate time window if specified
+        time_window = None
+        if hours is not None:
+            from datetime import timedelta
+            time_window = timedelta(hours=hours)
+
+        # Get alignment report
+        if output_format == "text":
+            report = ds.middleseek.get_alignment_report(time_window)
+            click.echo(report)
+        else:
+            metrics = ds.middleseek.get_alignment_metrics(time_window)
+            # Save JSON report to file
+            from pathlib import Path
+            output_file = Path(f"alignment_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+            output_file.write_text(json.dumps(metrics, indent=2))
+            click.echo(f"JSON report saved to {output_file}")
+
+    except Exception as e:
+        click.echo(f"Error generating alignment report: {str(e)}", err=True)
 
 
 @cli.command(name="update-research")

@@ -33,7 +33,10 @@ class MiddleSeekMessage:
     metadata: Optional[Dict] = None
 
     def to_dict(self) -> Dict:
-        return asdict(self)
+        """Convert message to dictionary, ensuring MessageType is serialized as string."""
+        data = asdict(self)
+        data['type'] = data['type'].value  # Convert enum to string
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict) -> "MiddleSeekMessage":
@@ -70,6 +73,13 @@ class MiddleSeekProtocol:
         """
         # Initialize conversation history
         self.history: List[MiddleSeekMessage] = []
+        self.history_file = os.path.join(os.path.expanduser("~"), ".dhammashell", "conversation_history.json")
+
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(self.history_file), exist_ok=True)
+
+        # Load existing history
+        self._load_history()
 
         # Initialize MiddleSeek core with API key
         if not api_key:
@@ -83,6 +93,61 @@ class MiddleSeekProtocol:
         except Exception as e:
             logger.error(f"Failed to initialize MiddleSeek core: {str(e)}")
             raise
+
+    def _load_history(self) -> None:
+        """Load conversation history from file."""
+        if os.path.exists(self.history_file):
+            try:
+                with open(self.history_file, 'r') as f:
+                    content = f.read().strip()
+                    if not content:  # Empty file
+                        logger.info("Conversation history file is empty")
+                        return
+
+                    try:
+                        data = json.loads(content)
+                        if not isinstance(data, list):
+                            logger.error("Invalid conversation history format: expected a list")
+                            return
+
+                        self.history = [MiddleSeekMessage.from_dict(msg) for msg in data]
+                        logger.info(f"Loaded {len(self.history)} messages from history")
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Invalid JSON in conversation history: {str(e)}")
+                        # Backup the corrupted file
+                        backup_file = f"{self.history_file}.bak"
+                        os.rename(self.history_file, backup_file)
+                        logger.info(f"Backed up corrupted history file to {backup_file}")
+            except Exception as e:
+                logger.error(f"Failed to load conversation history: {str(e)}")
+                # If there's any other error, start with empty history
+                self.history = []
+        else:
+            logger.info("No existing conversation history found")
+            self.history = []
+
+    def _save_history(self) -> None:
+        """Save conversation history to file."""
+        try:
+            # Ensure the directory exists
+            os.makedirs(os.path.dirname(self.history_file), exist_ok=True)
+
+            # Create a temporary file
+            temp_file = f"{self.history_file}.tmp"
+            with open(temp_file, 'w') as f:
+                json.dump([msg.to_dict() for msg in self.history], f, indent=2)
+
+            # Atomic rename to ensure file integrity
+            os.replace(temp_file, self.history_file)
+            logger.debug(f"Saved {len(self.history)} messages to history")
+        except Exception as e:
+            logger.error(f"Failed to save conversation history: {str(e)}")
+            # If there's an error, try to remove the temporary file
+            if os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
 
     def create_seek_message(
         self, content: str, metadata: Dict = None
@@ -110,6 +175,7 @@ class MiddleSeekProtocol:
                 metadata=metadata,
             )
             self.history.append(message)
+            self._save_history()
             return message
         except Exception as e:
             logger.error(f"Failed to create seek message: {str(e)}")
@@ -139,6 +205,7 @@ class MiddleSeekProtocol:
                 metadata=metadata,
             )
             self.history.append(message)
+            self._save_history()
             return message
         except Exception as e:
             logger.error(f"Failed to create response message: {str(e)}")
@@ -167,6 +234,7 @@ class MiddleSeekProtocol:
                 metadata={"original_message": message.to_dict()},
             )
             self.history.append(ack)
+            self._save_history()
             return ack
         except Exception as e:
             logger.error(f"Failed to acknowledge message: {str(e)}")
@@ -211,6 +279,7 @@ class MiddleSeekProtocol:
                 },
             )
             self.history.append(clarify)
+            self._save_history()
             return clarify
         except Exception as e:
             logger.error(f"Failed to request clarification: {str(e)}")

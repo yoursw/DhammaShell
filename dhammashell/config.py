@@ -14,60 +14,73 @@ console = Console()
 
 class Config:
     def __init__(self):
+        """Initialize configuration."""
         self.config_dir = Path.home() / ".dhammashell"
         self.config_file = self.config_dir / "config.json"
-        self.api_key: Optional[str] = None
+        self.config_dir.mkdir(exist_ok=True)
+        self._config = self._load_config()
 
-    def _load_config(self) -> None:
+    def _load_config(self) -> dict:
         """Load configuration from file."""
         if self.config_file.exists():
             try:
                 with open(self.config_file, 'r') as f:
-                    config = json.load(f)
-                    self.api_key = config.get('api_key')
-            except (json.JSONDecodeError, IOError) as e:
-                console.print(f"[yellow]Warning: Could not load config: {e}[/yellow]")
-                self.api_key = None
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Failed to load config: {str(e)}")
+                return {}
+        return {}
 
-    def _save_config(self) -> None:
+    def _save_config(self):
         """Save configuration to file."""
         try:
-            self.config_dir.mkdir(parents=True, exist_ok=True)
             with open(self.config_file, 'w') as f:
-                json.dump({'api_key': self.api_key}, f)
-        except IOError as e:
-            console.print(f"[red]Error: Could not save config: {e}[/red]")
+                json.dump(self._config, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save config: {str(e)}")
+            raise
 
     def get_api_key(self) -> Optional[str]:
-        """Get the API key, prompting for it if not set."""
-        # First try to load from config
-        self._load_config()
-        
-        if not self.api_key:
-            console.print("\n[bold cyan]DhammaShell Configuration[/bold cyan]")
-            console.print("To use MiddleSeek protocol, you need an OpenRouter API key.")
-            console.print("Get your key at: [link=https://openrouter.ai/keys]https://openrouter.ai/keys[/link]")
-            
-            api_key = Prompt.ask(
-                "\nEnter your OpenRouter API key",
-                password=True
-            )
-            
-            if api_key:
-                self.api_key = api_key
-                self._save_config()
-                console.print("[green]API key saved successfully![/green]")
-            else:
-                console.print("[yellow]No API key provided. Some features may be limited.[/yellow]")
-        
-        return self.api_key
+        """Get the OpenRouter API key."""
+        if 'api_key' in self._config:
+            return self._config['api_key']
 
-    def clear_api_key(self) -> None:
+        api_key = Prompt.ask("Enter your OpenRouter API key")
+        if not api_key:
+            raise ValueError("API key is required")
+
+        self._config['api_key'] = api_key
+        self._save_config()
+        return api_key
+
+    def clear_api_key(self):
         """Clear the stored API key."""
-        self.api_key = None
-        if self.config_file.exists():
-            try:
-                self.config_file.unlink()
-                console.print("[green]API key cleared successfully![/green]")
-            except IOError as e:
-                console.print(f"[red]Error clearing API key: {e}[/red]") 
+        if 'api_key' in self._config:
+            del self._config['api_key']
+            self._save_config()
+            console.print("[green]API key cleared[/green]")
+        else:
+            console.print("[yellow]No API key stored[/yellow]")
+
+    def get_research_mode(self) -> bool:
+        """Get the research mode setting."""
+        return self._config.get('research_mode', False)
+
+    def set_research_mode(self, enabled: bool):
+        """Set the research mode setting."""
+        self._config['research_mode'] = enabled
+        self._save_config()
+        status = "enabled" if enabled else "disabled"
+        console.print(f"[green]Research mode {status}[/green]")
+
+    def get_all_settings(self) -> dict:
+        """Get all configuration settings.
+
+        Returns:
+            dict: Current configuration settings
+        """
+        settings = {
+            'api_key': '****' if 'api_key' in self._config else None,
+            'research_mode': self.get_research_mode()
+        }
+        return settings

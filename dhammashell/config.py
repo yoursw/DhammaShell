@@ -6,12 +6,80 @@ Handles API key storage and retrieval.
 import os
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 from rich.prompt import Prompt
 from rich.console import Console
+from pydantic import BaseModel, Field
+import logging
+from logging.handlers import RotatingFileHandler
 
 console = Console()
 
+class LoggingConfig(BaseModel):
+    """Configuration for logging settings."""
+    level: str = Field(default="INFO", description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)")
+    max_bytes: int = Field(default=10_000_000, description="Maximum size of log file in bytes")
+    backup_count: int = Field(default=5, description="Number of backup log files to keep")
+    format: str = Field(
+        default="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        description="Log message format"
+    )
+
+class Config(BaseModel):
+    """Configuration settings for DhammaShell."""
+    api_key: Optional[str] = Field(default=None, description="API key for external services")
+    research_enabled: bool = Field(default=False, description="Enable research data collection")
+    logging: LoggingConfig = Field(default_factory=LoggingConfig, description="Logging configuration")
+
+    @classmethod
+    def load(cls) -> "Config":
+        """Load configuration from environment variables."""
+        return cls(
+            api_key=os.getenv("DHAMMASHELL_API_KEY"),
+            research_enabled=os.getenv("DHAMMASHELL_RESEARCH_ENABLED", "false").lower() == "true",
+            logging=LoggingConfig(
+                level=os.getenv("DHAMMASHELL_LOG_LEVEL", "INFO"),
+                max_bytes=int(os.getenv("DHAMMASHELL_LOG_MAX_BYTES", "10000000")),
+                backup_count=int(os.getenv("DHAMMASHELL_LOG_BACKUP_COUNT", "5")),
+                format=os.getenv(
+                    "DHAMMASHELL_LOG_FORMAT",
+                    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+                )
+            )
+        )
+
+def setup_logging(config: LoggingConfig) -> None:
+    """Set up logging with the given configuration."""
+    # Create logs directory if it doesn't exist
+    os.makedirs("logs", exist_ok=True)
+
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(config.level)
+
+    # Remove existing handlers
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    # Add file handler with rotation
+    file_handler = RotatingFileHandler(
+        "logs/dhammashell.log",
+        maxBytes=config.max_bytes,
+        backupCount=config.backup_count
+    )
+    file_handler.setFormatter(logging.Formatter(config.format))
+    root_logger.addHandler(file_handler)
+
+    # Add console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter(config.format))
+    root_logger.addHandler(console_handler)
+
+# Global configuration instance
+config = Config.load()
+
+# Set up logging
+setup_logging(config.logging)
 
 class Config:
     def __init__(self):

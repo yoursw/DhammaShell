@@ -217,13 +217,14 @@ class MiddleSeekProtocol:
             raise
 
     def generate_response(
-        self, message: MiddleSeekMessage, compassion_score: int
+        self, message: MiddleSeekMessage, compassion_score: int, context: Optional[List[Dict]] = None
     ) -> str:
         """Generate a mindful response based on the message and compassion score.
 
         Args:
             message: The message to respond to
             compassion_score: The compassion score (0-5)
+            context: Optional conversation context
 
         Returns:
             A mindful response
@@ -238,8 +239,12 @@ class MiddleSeekProtocol:
             raise ValueError("Compassion score must be an integer between 0 and 5")
 
         try:
-            # Get response from core
-            response = self.core.generate_response(message.content, compassion_score)
+            # Get response from core with context
+            response = self.core.generate_response(
+                message.content,
+                compassion_score,
+                context=context
+            )
 
             # Add Dharma wisdom if appropriate
             if compassion_score >= 4:

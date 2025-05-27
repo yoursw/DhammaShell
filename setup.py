@@ -45,7 +45,7 @@ setup(
     description="A mindful terminal chat tool with empathy research capabilities",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/dhammashell/dhammashell",
+    url="https://github.com/yoursw/dhammashell",
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Science/Research",

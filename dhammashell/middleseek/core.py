@@ -10,16 +10,25 @@ import uuid
 import json
 import os
 from typing import Dict, Optional, Any, List, Tuple
+from dataclasses import dataclass
+from datetime import datetime
 from ratelimit import limits, sleep_and_retry
 from ..config import config
 from ..prompt import MiddleSeekPrompt, PromptType
 
-# Configure logging
-log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs')
-os.makedirs(log_dir, exist_ok=True)
+# Configure root logger to prevent propagation to stdout
+logging.getLogger().setLevel(logging.WARNING)
+logging.getLogger().handlers = []
 
+# Configure module logger
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+logger.propagate = False  # Prevent propagation to root logger
+
+# Configure logging directory
+log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs')
+os.makedirs(log_dir, exist_ok=True)
+logger.info(f"Log directory: {log_dir}")
 
 # File handler for debug.log
 debug_handler = logging.FileHandler(os.path.join(log_dir, 'debug.log'))
@@ -28,6 +37,16 @@ debug_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(
 debug_handler.setFormatter(debug_formatter)
 logger.addHandler(debug_handler)
 
+# File handler for self-healing.log
+healing_logger = logging.getLogger(f"{__name__}.healing")
+healing_logger.setLevel(logging.INFO)
+healing_logger.propagate = False
+healing_handler = logging.FileHandler(os.path.join(log_dir, 'self_healing.log'))
+healing_handler.setLevel(logging.INFO)
+healing_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+healing_handler.setFormatter(healing_formatter)
+healing_logger.addHandler(healing_handler)
+
 # Only add console handler if explicitly enabled
 if os.environ.get('DHAMMASHELL_DEBUG_CONSOLE', '').lower() == 'true':
     console_handler = logging.StreamHandler()
@@ -35,6 +54,7 @@ if os.environ.get('DHAMMASHELL_DEBUG_CONSOLE', '').lower() == 'true':
     console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
+    healing_logger.addHandler(console_handler)
 
 # Rate limit: 100 calls per minute
 CALLS = 100
@@ -61,11 +81,13 @@ class SystemHealth:
             "healing_attempts": 0
         }
         self.health_thresholds = {
-            "max_errors_per_minute": 5,
-            "min_compassion_average": 3.0,
-            "max_response_time": 10.0,  # seconds
-            "max_healing_attempts": 3
+            "max_errors_per_minute": 10,
+            "min_compassion_average": 2.5,
+            "max_response_time": 30.0,
+            "max_healing_attempts": 3,
+            "response_time_window": 10
         }
+        self.healing_logger = logging.getLogger(f"{__name__}.healing")
 
     def record_metric(self, metric: str, value: Any) -> None:
         """Record a health metric."""
@@ -85,18 +107,22 @@ class SystemHealth:
 
         # Check error rate
         if self.health_metrics["errors"] > self.health_thresholds["max_errors_per_minute"]:
+            self.healing_logger.warning(f"Error rate {self.health_metrics['errors']} exceeds threshold {self.health_thresholds['max_errors_per_minute']}")
             return False, "Error rate exceeds threshold"
 
         # Check compassion scores
         if self.health_metrics["compassion_scores"]:
             avg_compassion = sum(self.health_metrics["compassion_scores"]) / len(self.health_metrics["compassion_scores"])
             if avg_compassion < self.health_thresholds["min_compassion_average"]:
+                self.healing_logger.warning(f"Average compassion score {avg_compassion:.2f} below threshold {self.health_thresholds['min_compassion_average']}")
                 return False, "Compassion scores below threshold"
 
-        # Check response times
+        # Check response times using a rolling window
         if self.health_metrics["response_times"]:
-            avg_response_time = sum(self.health_metrics["response_times"]) / len(self.health_metrics["response_times"])
+            recent_times = self.health_metrics["response_times"][-self.health_thresholds["response_time_window"]:]
+            avg_response_time = sum(recent_times) / len(recent_times)
             if avg_response_time > self.health_thresholds["max_response_time"]:
+                self.healing_logger.warning(f"Average response time {avg_response_time:.2f}s exceeds threshold {self.health_thresholds['max_response_time']}s")
                 return False, "Response times above threshold"
 
         return True, "System healthy"
@@ -104,11 +130,13 @@ class SystemHealth:
     def attempt_healing(self) -> bool:
         """Attempt to heal the system."""
         if self.health_metrics["healing_attempts"] >= self.health_thresholds["max_healing_attempts"]:
+            self.healing_logger.error(f"Maximum healing attempts ({self.health_thresholds['max_healing_attempts']}) reached")
             return False
 
         self.health_metrics["healing_attempts"] += 1
         self.health_metrics["errors"] = 0
         self.health_metrics["last_audit"] = time.time()
+        self.healing_logger.info(f"Healing attempt {self.health_metrics['healing_attempts']} initiated")
         return True
 
     def reset_metrics(self) -> None:
@@ -121,6 +149,7 @@ class SystemHealth:
             "last_audit": time.time(),
             "healing_attempts": 0
         }
+        self.healing_logger.info("Health metrics reset")
 
 class DharmaProtocol:
     """Handles Dharma wisdom and protocol."""
@@ -157,6 +186,91 @@ class DharmaProtocol:
         """Generate a trace ID."""
         return f"TRACE:{uuid.uuid4()}"
 
+@dataclass
+class ChatHistoryEntry:
+    """Represents a single chat history entry with healing information."""
+    timestamp: datetime
+    message: str
+    original_response: str
+    healed_response: Optional[str]
+    healing_reason: Optional[str]
+    compassion_score: int
+    context: Optional[List[Dict]]
+
+class ChatHistory:
+    """Manages chat history for auditing purposes."""
+
+    def __init__(self, max_entries: int = 1000):
+        self.history: List[ChatHistoryEntry] = []
+        self.max_entries = max_entries
+        self.history_file = os.path.join(log_dir, 'chat_history.json')
+        logger.info(f"Chat history file: {self.history_file}")
+        self._load_history()
+
+    def _load_history(self) -> None:
+        """Load chat history from file if it exists."""
+        if os.path.exists(self.history_file):
+            try:
+                with open(self.history_file, 'r') as f:
+                    data = json.load(f)
+                    self.history = [
+                        ChatHistoryEntry(
+                            timestamp=datetime.fromisoformat(entry['timestamp']),
+                            message=entry['message'],
+                            original_response=entry['original_response'],
+                            healed_response=entry.get('healed_response'),
+                            healing_reason=entry.get('healing_reason'),
+                            compassion_score=entry['compassion_score'],
+                            context=entry.get('context')
+                        )
+                        for entry in data
+                    ]
+                logger.info(f"Loaded {len(self.history)} chat history entries")
+            except Exception as e:
+                logger.error(f"Failed to load chat history: {e}")
+        else:
+            logger.info("No existing chat history found, starting fresh")
+
+    def _save_history(self) -> None:
+        """Save chat history to file."""
+        try:
+            with open(self.history_file, 'w') as f:
+                json.dump([
+                    {
+                        'timestamp': entry.timestamp.isoformat(),
+                        'message': entry.message,
+                        'original_response': entry.original_response,
+                        'healed_response': entry.healed_response,
+                        'healing_reason': entry.healing_reason,
+                        'compassion_score': entry.compassion_score,
+                        'context': entry.context
+                    }
+                    for entry in self.history
+                ], f, indent=2)
+            logger.debug(f"Saved {len(self.history)} chat history entries to {self.history_file}")
+        except Exception as e:
+            logger.error(f"Failed to save chat history: {e}")
+
+    def add_entry(self, entry: ChatHistoryEntry) -> None:
+        """Add a new entry to the chat history."""
+        self.history.append(entry)
+        if len(self.history) > self.max_entries:
+            self.history = self.history[-self.max_entries:]
+            logger.debug(f"Trimmed chat history to {self.max_entries} entries")
+        self._save_history()
+        if entry.healed_response:
+            logger.info(f"Added healed response to chat history: {self.history_file}")
+        else:
+            logger.debug(f"Added response to chat history: {self.history_file}")
+
+    def get_recent_entries(self, count: int = 10) -> List[ChatHistoryEntry]:
+        """Get the most recent chat history entries."""
+        return self.history[-count:]
+
+    def get_healed_entries(self) -> List[ChatHistoryEntry]:
+        """Get all entries that required healing."""
+        return [entry for entry in self.history if entry.healed_response is not None]
+
 class MiddleSeekCore:
     """Core functionality for MiddleSeek protocol."""
 
@@ -175,8 +289,10 @@ class MiddleSeekCore:
         self.prompt = MiddleSeekPrompt()
         self.dharma = DharmaProtocol()
         self.health = SystemHealth()
+        self.chat_history = ChatHistory()
+        self.healing_logger = logging.getLogger(f"{__name__}.healing")
 
-    def _audit_response(self, response: str) -> bool:
+    def _audit_response(self, response: str) -> Tuple[bool, Optional[str]]:
         """Audit the response for ethical compliance."""
         # Check for potentially harmful content
         harmful_patterns = [
@@ -187,17 +303,17 @@ class MiddleSeekCore:
         response_lower = response.lower()
         for pattern in harmful_patterns:
             if pattern in response_lower:
-                logger.warning(f"Potentially harmful content detected: {pattern}")
-                return False
+                self.healing_logger.warning(f"Potentially harmful content detected: {pattern}")
+                return False, f"Detected harmful pattern: {pattern}"
 
         # Check response length and structure
         if len(response) < 10 or len(response) > 2000:
-            logger.warning("Response length outside acceptable range")
-            return False
+            self.healing_logger.warning("Response length outside acceptable range")
+            return False, "Response length outside acceptable range"
 
-        return True
+        return True, None
 
-    def _heal_response(self, response: str) -> str:
+    def _heal_response(self, response: str, reason: str) -> str:
         """Attempt to heal a problematic response."""
         # Remove potentially harmful content
         response_lines = response.split('\n')
@@ -214,6 +330,7 @@ class MiddleSeekCore:
             if not any(positive in healed_response.lower() for positive in ["peace", "love", "kindness", "compassion"]):
                 healed_response += "\n\nMay this response bring peace and understanding."
 
+        self.healing_logger.info(f"Response healed: {reason}")
         return healed_response
 
     def _construct_dharma_prompt(self, prompt: str, intention: str) -> str:
@@ -286,9 +403,34 @@ Please provide a response that aligns with the Dharma Protocol and maintains eth
             self.health.record_metric("response_times", time.time() - start_time)
 
             # Audit and heal response if necessary
-            if not self._audit_response(response):
-                response = self._heal_response(response)
+            is_valid, healing_reason = self._audit_response(response)
+            if not is_valid:
+                healed_response = self._heal_response(response, healing_reason)
                 logger.info("Response healed after audit")
+
+                # Record in chat history
+                self.chat_history.add_entry(ChatHistoryEntry(
+                    timestamp=datetime.now(),
+                    message=message,
+                    original_response=response,
+                    healed_response=healed_response,
+                    healing_reason=healing_reason,
+                    compassion_score=compassion_score,
+                    context=context
+                ))
+
+                response = healed_response
+            else:
+                # Record valid response in chat history
+                self.chat_history.add_entry(ChatHistoryEntry(
+                    timestamp=datetime.now(),
+                    message=message,
+                    original_response=response,
+                    healed_response=None,
+                    healing_reason=None,
+                    compassion_score=compassion_score,
+                    context=context
+                ))
 
             # Add Dharma wisdom for high compassion scores
             if compassion_score >= 4:

@@ -16,6 +16,7 @@ from collections import Counter
 from ratelimit import limits, sleep_and_retry
 from ..config import config
 from ..prompt import MiddleSeekPrompt, PromptType
+from .alignment import SystemHealth, AlignmentAuditor
 
 # Configure root logger to prevent propagation to stdout
 logging.getLogger().setLevel(logging.WARNING)

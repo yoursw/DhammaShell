@@ -7,7 +7,7 @@ import os
 import json
 from pathlib import Path
 from typing import Optional, Dict, Any
-from rich.prompt import Prompt
+from rich.prompt import Prompt, Confirm
 from rich.console import Console
 from pydantic import BaseModel, Field
 import logging
@@ -25,69 +25,15 @@ class LoggingConfig(BaseModel):
         description="Log message format"
     )
 
-class Config(BaseModel):
-    """Configuration settings for DhammaShell."""
-    api_key: Optional[str] = Field(default=None, description="API key for external services")
-    research_enabled: bool = Field(default=False, description="Enable research data collection")
-    logging: LoggingConfig = Field(default_factory=LoggingConfig, description="Logging configuration")
-
-    @classmethod
-    def load(cls) -> "Config":
-        """Load configuration from environment variables."""
-        return cls(
-            api_key=os.getenv("DHAMMASHELL_API_KEY"),
-            research_enabled=os.getenv("DHAMMASHELL_RESEARCH_ENABLED", "false").lower() == "true",
-            logging=LoggingConfig(
-                level=os.getenv("DHAMMASHELL_LOG_LEVEL", "INFO"),
-                max_bytes=int(os.getenv("DHAMMASHELL_LOG_MAX_BYTES", "10000000")),
-                backup_count=int(os.getenv("DHAMMASHELL_LOG_BACKUP_COUNT", "5")),
-                format=os.getenv(
-                    "DHAMMASHELL_LOG_FORMAT",
-                    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-                )
-            )
-        )
-
-def setup_logging(config: LoggingConfig) -> None:
-    """Set up logging with the given configuration."""
-    # Create logs directory if it doesn't exist
-    os.makedirs("logs", exist_ok=True)
-
-    # Configure root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(config.level)
-
-    # Remove existing handlers
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
-
-    # Add file handler with rotation
-    file_handler = RotatingFileHandler(
-        "logs/dhammashell.log",
-        maxBytes=config.max_bytes,
-        backupCount=config.backup_count
-    )
-    file_handler.setFormatter(logging.Formatter(config.format))
-    root_logger.addHandler(file_handler)
-
-    # Add console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(logging.Formatter(config.format))
-    root_logger.addHandler(console_handler)
-
-# Global configuration instance
-config = Config.load()
-
-# Set up logging
-setup_logging(config.logging)
-
 class Config:
+    """Configuration settings for DhammaShell."""
     def __init__(self):
         """Initialize configuration."""
         self.config_dir = Path.home() / ".dhammashell"
         self.config_file = self.config_dir / "config.json"
         self.config_dir.mkdir(exist_ok=True)
         self._config = self._load_config()
+        self._setup_logging()
 
     def _load_config(self) -> dict:
         """Load configuration from file."""
@@ -96,7 +42,7 @@ class Config:
                 with open(self.config_file, "r") as f:
                     return json.load(f)
             except Exception as e:
-                logger.error(f"Failed to load config: {str(e)}")
+                logging.error(f"Failed to load config: {str(e)}")
                 return {}
         return {}
 
@@ -106,30 +52,58 @@ class Config:
             with open(self.config_file, "w") as f:
                 json.dump(self._config, f, indent=2)
         except Exception as e:
-            logger.error(f"Failed to save config: {str(e)}")
+            logging.error(f"Failed to save config: {str(e)}")
             raise
 
-    def get_api_key(self) -> Optional[str]:
-        """Get the OpenRouter API key."""
-        if "api_key" in self._config:
-            return self._config["api_key"]
+    def _setup_logging(self):
+        """Set up logging with the current configuration."""
+        # Create logs directory if it doesn't exist
+        os.makedirs("logs", exist_ok=True)
 
-        api_key = Prompt.ask("Enter your OpenRouter API key")
-        if not api_key:
-            raise ValueError("API key is required")
+        # Get logging config from file or use defaults
+        log_config = self._config.get("logging", {
+            "level": "INFO",
+            "max_bytes": 10_000_000,
+            "backup_count": 5,
+            "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        })
 
-        self._config["api_key"] = api_key
-        self._save_config()
-        return api_key
+        # Configure root logger
+        root_logger = logging.getLogger()
+        root_logger.setLevel(log_config["level"])
 
-    def clear_api_key(self):
-        """Clear the stored API key."""
-        if "api_key" in self._config:
-            del self._config["api_key"]
-            self._save_config()
-            console.print("[green]API key cleared[/green]")
+        # Remove existing handlers
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+
+        # Add file handler with rotation
+        file_handler = RotatingFileHandler(
+            "logs/dhammashell.log",
+            maxBytes=log_config["max_bytes"],
+            backupCount=log_config["backup_count"]
+        )
+        file_handler.setFormatter(logging.Formatter(log_config["format"]))
+        root_logger.addHandler(file_handler)
+
+        # Add console handler
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(logging.Formatter(log_config["format"]))
+        root_logger.addHandler(console_handler)
+
+    @property
+    def api_key(self) -> Optional[str]:
+        """Get the API key."""
+        return self._config.get("api_key")
+
+    @api_key.setter
+    def api_key(self, value: Optional[str]):
+        """Set the API key."""
+        if value is None:
+            if "api_key" in self._config:
+                del self._config["api_key"]
         else:
-            console.print("[yellow]No API key stored[/yellow]")
+            self._config["api_key"] = value
+        self._save_config()
 
     def get_research_mode(self) -> bool:
         """Get the research mode setting."""
@@ -142,14 +116,94 @@ class Config:
         status = "enabled" if enabled else "disabled"
         console.print(f"[green]Research mode {status}[/green]")
 
-    def get_all_settings(self) -> dict:
-        """Get all configuration settings.
+    def get_logging_config(self) -> LoggingConfig:
+        """Get the current logging configuration."""
+        return LoggingConfig(**self._config.get("logging", {}))
 
-        Returns:
-            dict: Current configuration settings
-        """
-        settings = {
+    def set_logging_config(self, config: LoggingConfig):
+        """Set the logging configuration."""
+        self._config["logging"] = config.dict()
+        self._save_config()
+        self._setup_logging()
+        console.print("[green]Logging configuration updated[/green]")
+
+    def get_all_settings(self) -> dict:
+        """Get all configuration settings."""
+        return {
             "api_key": "****" if "api_key" in self._config else None,
             "research_mode": self.get_research_mode(),
+            "logging": self.get_logging_config().dict()
         }
-        return settings
+
+    def configure_interactive(self):
+        """Interactively configure all settings."""
+        console.print("\n[bold cyan]DhammaShell Configuration[/bold cyan]")
+        console.print("===========================\n")
+
+        # API Key
+        if "api_key" in self._config:
+            if Confirm.ask("Do you want to update the API key?"):
+                self.api_key = None
+                self.api_key = Prompt.ask("Enter your OpenRouter API key")
+        else:
+            console.print("[yellow]No API key configured[/yellow]")
+            self.api_key = Prompt.ask("Enter your OpenRouter API key")
+
+        # Research Mode
+        current_research = self.get_research_mode()
+        if Confirm.ask(f"Research mode is currently {'enabled' if current_research else 'disabled'}. Do you want to change it?"):
+            self.set_research_mode(not current_research)
+
+        # Logging Configuration
+        if Confirm.ask("Do you want to configure logging settings?"):
+            log_config = self.get_logging_config()
+
+            # Log Level
+            level = Prompt.ask(
+                "Enter logging level",
+                choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+                default=log_config.level
+            )
+
+            # Max Bytes
+            max_bytes = int(Prompt.ask(
+                "Enter maximum log file size in bytes",
+                default=str(log_config.max_bytes)
+            ))
+
+            # Backup Count
+            backup_count = int(Prompt.ask(
+                "Enter number of backup log files",
+                default=str(log_config.backup_count)
+            ))
+
+            # Format
+            format_str = Prompt.ask(
+                "Enter log message format",
+                default=log_config.format
+            )
+
+            new_config = LoggingConfig(
+                level=level,
+                max_bytes=max_bytes,
+                backup_count=backup_count,
+                format=format_str
+            )
+            self.set_logging_config(new_config)
+
+        console.print("\n[green]Configuration completed![/green]")
+        self.display_settings()
+
+    def display_settings(self):
+        """Display current configuration settings."""
+        settings = self.get_all_settings()
+        console.print("\n[bold cyan]Current Configuration:[/bold cyan]")
+        console.print("===========================")
+        console.print(f"API Key: {'Configured' if settings['api_key'] else 'Not configured'}")
+        console.print(f"Research Mode: {'Enabled' if settings['research_mode'] else 'Disabled'}")
+        console.print("\n[bold]Logging Configuration:[/bold]")
+        for key, value in settings['logging'].items():
+            console.print(f"  {key}: {value}")
+
+# Global configuration instance
+config = Config()

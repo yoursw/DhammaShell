@@ -3,8 +3,9 @@
 import sys
 import time
 import logging
-from typing import Optional
+from typing import Optional, Dict, Tuple
 from pathlib import Path
+from datetime import timedelta
 
 import typer
 from rich.console import Console
@@ -14,10 +15,11 @@ from textblob import TextBlob
 from prompt_toolkit import PromptSession
 from prompt_toolkit.styles import Style
 from prompt_toolkit.formatted_text import HTML
+import click
 
-from .middleseek import MiddleSeekProtocol, MessageType, MiddleSeekMessage
+from .middleseek.core import MiddleSeekCore, MiddleSeek
+from .middleseek.alignment import SystemHealth, AlignmentAuditor
 from .config import Config
-from .empathy_research import EmpathyAnalyzer, ResearchDataCollector
 
 # Configure logging
 logging.basicConfig(
@@ -30,13 +32,18 @@ console = Console()
 
 
 class DhammaShell:
-    def __init__(self, calm_mode: bool = False):
-        """Initialize DhammaShell.
+    """Main class for DharmaShell functionality."""
 
-        Args:
-            calm_mode: Whether to enable zen mode with delays
-        """
+    def __init__(self, calm_mode: bool = False):
+        """Initialize DharmaShell."""
+        self.api_key = config.api_key
+        if not self.api_key:
+            raise ValueError("API key is required. Please configure it first.")
+
         self.calm_mode = calm_mode
+        self.core = MiddleSeekCore(self.api_key)
+        self.health = SystemHealth()
+        self.alignment_auditor = AlignmentAuditor(self.core.chat_history)
         self.session = PromptSession()
         self.style = Style.from_dict(
             {
@@ -45,38 +52,12 @@ class DhammaShell:
             }
         )
         self.config = Config()
-        self._middleseek = None
-        self._empathy_analyzer = None
-        self._research_collector = None
         self.conversation_context = []
 
     @property
     def research_mode(self) -> bool:
         """Get research mode from config."""
         return self.config.get_research_mode()
-
-    @property
-    def middleseek(self) -> MiddleSeekProtocol:
-        """Get or initialize MiddleSeek protocol."""
-        if self._middleseek is None:
-            api_key = self.config.get_api_key()
-            self._middleseek = MiddleSeekProtocol(api_key)
-        return self._middleseek
-
-    @property
-    def empathy_analyzer(self) -> EmpathyAnalyzer:
-        """Get or initialize empathy analyzer."""
-        if self._empathy_analyzer is None:
-            self._empathy_analyzer = EmpathyAnalyzer()
-        return self._empathy_analyzer
-
-    @property
-    def research_collector(self) -> Optional[ResearchDataCollector]:
-        """Get or initialize research collector if research mode is enabled."""
-        if self.research_mode and self._research_collector is None:
-            self._research_collector = ResearchDataCollector()
-            self._research_collector.start_session()
-        return self._research_collector
 
     def analyze_compassion(self, text: str) -> tuple[int, str]:
         """Analyze compassion level in text."""
@@ -123,7 +104,7 @@ class DhammaShell:
 
         try:
             # Create seek message
-            seek_msg = self.middleseek.create_seek_message(user_input)
+            seek_msg = self.core.create_seek_message(user_input)
 
             # Analyze compassion
             score, feedback = self.analyze_compassion(user_input)
@@ -131,7 +112,7 @@ class DhammaShell:
 
             # If score is low, request clarification
             if score < 3:
-                clarify_msg = self.middleseek.request_clarification(seek_msg, score)
+                clarify_msg = self.core.request_clarification(seek_msg, score)
                 console.print(f"\n[System] {clarify_msg.content}\n")
 
                 confirm = Prompt.ask("Send anyway?", choices=["Y", "N"], default="N")
@@ -139,7 +120,7 @@ class DhammaShell:
                     return
 
             # Acknowledge the message
-            ack_msg = self.middleseek.acknowledge(seek_msg)
+            ack_msg = self.core.acknowledge(seek_msg)
             console.print(f"\n[System] {ack_msg.content}\n")
 
             # Generate and send response
@@ -147,7 +128,7 @@ class DhammaShell:
                 time.sleep(1)
 
             # Add conversation context to the API call
-            response_content = self.middleseek.generate_response(
+            response_content = self.core.generate_response(
                 seek_msg,
                 score,
                 context=self.conversation_context
@@ -167,30 +148,17 @@ class DhammaShell:
             if len(self.conversation_context) > 10:
                 self.conversation_context = self.conversation_context[-10:]
 
-            response_msg = self.middleseek.create_response(
+            response_msg = self.core.create_response(
                 response_content, {"compassion_score": score}
             )
             console.print(f"\n[System] {response_msg.content}\n")
-
-            # Analyze and record interaction for research if enabled
-            if self.research_mode and self.research_collector:
-                analysis = self.empathy_analyzer.analyze_interaction(
-                    user_input=user_input,
-                    system_response=response_content,
-                    context=self.conversation_context
-                )
-                self.research_collector.record_interaction(
-                    user_input=user_input,
-                    system_response=response_content,
-                    analysis=analysis,
-                )
 
         except Exception as e:
             logger.error(f"Failed to handle message: {str(e)}")
             console.print(f"[red]Error: {str(e)}[/red]")
 
     def chat_loop(self):
-        """Main chat loop."""
+        """Start an interactive chat session."""
         console.print("\n🌀 DhammaShell v1.0 - Type mindfully\n")
         if self.research_mode:
             console.print("[yellow]Research data collection is enabled[/yellow]\n")
@@ -204,33 +172,35 @@ class DhammaShell:
                     )
 
                     if user_input.lower() in ["exit", "quit", "q"]:
-                        # Save research data before exiting if enabled
-                        if self.research_mode and self.research_collector:
-                            self.research_collector.save_session()
-                            console.print("\n[yellow]Research data saved.[/yellow]")
                         break
 
                     # Handle message with MiddleSeek protocol
                     self.handle_message(user_input)
 
                 except KeyboardInterrupt:
-                    # Save research data before exiting if enabled
-                    if self.research_mode and self.research_collector:
-                        self.research_collector.save_session()
-                        console.print(
-                            "\n[yellow]Chat session ended. Research data saved.[/yellow]"
-                        )
                     break
                 except Exception as e:
                     logger.error(f"Error in chat loop: {str(e)}")
                     console.print(f"[red]Error: {str(e)}[/red]")
         finally:
             # Ensure research data is saved even if there's an error
-            if self.research_mode and self.research_collector:
+            if self.research_mode:
                 try:
-                    self.research_collector.save_session()
+                    self.core.save_session()
                 except Exception as e:
                     logger.error(f"Failed to save research data: {str(e)}")
+
+    def get_alignment_report(self, time_window: Optional[timedelta] = None) -> str:
+        """Get a human-readable alignment report."""
+        return self.alignment_auditor.generate_alignment_report(time_window)
+
+    def get_alignment_metrics(self, time_window: Optional[timedelta] = None) -> Dict:
+        """Get alignment metrics as a dictionary."""
+        return self.alignment_auditor.analyze_alignment(time_window).to_dict()
+
+    def check_health(self) -> Tuple[bool, str]:
+        """Check system health."""
+        return self.health.check_health()
 
 
 @app.command()
@@ -285,7 +255,7 @@ def export(calm: bool = typer.Option(False, "--calm", help="Enable zen mode")):
     """Export the current conversation."""
     try:
         ds = DhammaShell(calm_mode=calm)
-        console.print(ds.middleseek.export_conversation())
+        console.print(ds.core.export_conversation())
     except Exception as e:
         logger.error(f"Failed to export conversation: {str(e)}")
         console.print(f"[red]Error: {str(e)}[/red]")

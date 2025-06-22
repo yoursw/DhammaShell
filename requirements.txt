@@ -3,7 +3,12 @@ textblob==0.17.1
 prompt_toolkit==3.0.43
 rich==13.7.0
 typer==0.9.0
-pydantic==2.6.1  # For data validation
+pydantic  # For data validation
+requests
+
+# TODO: Port codebase to support Python 3.13
+  # pydantic==2.7.4 # REF: https://stackoverflow.com/questions/78905620/typeerror-forwardref-evaluate-missing-1-required-keyword-only-argument-rec
+
 python-dateutil==2.8.2  # For timestamp handling
 pytest>=8.0.0
 pytest-cov>=4.1.0
